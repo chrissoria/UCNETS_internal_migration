@@ -1,0 +1,104 @@
+---
+title: "Create Panel Decomposition"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup-decomp, include=FALSE}
+# This file is designed to be sourced as a child document from 00_create_long_data.Rmd
+# It expects 'df' to already be loaded in the environment
+```
+
+# Panel Decomposition
+
+This notebook creates between-person means and within-person deviations for panel analysis.
+Also expands time-invariant demographics and creates Wave 3 weights.
+
+## Load Helper Functions
+
+```{r load-helpers-decomp}
+library(here)
+source(here("code", "helpers", "panel_helpers.R"))
+```
+
+## Between/Within Person Decomposition
+
+Creates means (between) and deviations from mean (within) for each variable.
+
+```{r define-decomposition-vars}
+vars_for_decomposition <- c(
+  # Current variables
+  "LE_MovedTown", "Owns_home", "Full_Time", "LT_BA", "BA_or_greater", "LE_NewJob", "LE_NewSchool",
+  "LEX_Birth", "LE_FinanProb", "Marr_Cohab", "Kin_within_60_N", "Nonkin_within_60_N",
+  "Nonkin_in_HH_N", "Kin_in_HH_N", "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Kin_GT_Hour", "Nonkin_GT_Hour",  # Aliases without _N
+  "Mother_in_Hour", "Father_in_Hour", "Plan_to_Move", "web",
+
+  # Lagged variables
+  "lag_Moved_Town", "lag_Owns_Home", "lag_Full_Time", "lag_LT_BA", "lag_BA_or_greater", "lag_LEX_Birth",
+  "lag_Finan_Prob", "lag_Marr_Cohab", "lag_Kin_within_60_N", "lag_Nonkin_within_60_N",
+  "lag_Nonkin_in_HH_N", "lag_Kin_in_HH_N",
+  "lag_Kin_GT_Hour", "lag_Nonkin_GT_Hour",  # Aliases without _N
+  "lag_Kin_GT_Hour_N", "lag_Nonkin_GT_Hour_N",  # Original names with _N
+  "lag_Plan_Move",
+
+  # Transition variables
+  "Homeowner_to_renter", "Renter_to_homeowner", "Fulltime_to_less",
+  "Married_to_divorced", "lag_Married_to_divorced", "lag_Fulltime_to_less",
+  "lag_Homeowner_to_renter", "lag_Renter_to_homeowner", "Not_to_Married",
+  "lag_Not_to_Married", "Less_to_fulltime", "lag_Less_to_fulltime",
+
+  # Age
+  "age",
+
+  # Cumulative variables
+  "cu_NewJob", "cu_NewSchool", "cu_Plan_to_Move", "cu_FinanProb", "cu_Birth",
+  "lag_cu_NewJob", "lag_cu_NewSchool", "lag_cu_Plan_to_Move", "lag_cu_FinanProb",
+  "lag_cu_Birth",
+
+  # Other
+  "lag_New_School", "lag_New_Job", "employed", "past_finan_prob",
+  "FinanProb_to_not", "Not_to_FinanProb", "lag_FinanProb_to_not", "lag_Not_to_FinanProb"
+)
+```
+
+```{r create-decomposition}
+# Use helper function for batch decomposition
+df <- create_between_within_multi(df, vars_for_decomposition, id_var = "prim_key")
+```
+
+## Time-Invariant Demographic Variables
+
+Expand across all waves for each individual.
+
+```{r time-invariant-demographics}
+# Race/ethnicity variables
+df <- expand_time_invariant(df, "Eth_black", "black_race")
+df <- expand_time_invariant(df, "Eth_asian", "asian_race")
+df <- expand_time_invariant(df, "Eth_other", "other_race")
+df <- expand_time_invariant(df, "Eth_latino", "latino_eth")
+
+# Gender (1=Male, 2=Female in original coding)
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(gender = first(na.omit(gender))) %>%
+  ungroup() %>%
+  mutate(female = ifelse(gender == 2, 1, 0))
+```
+
+## Wave 3 Weights
+
+Create Wave 3 demographic weights for all observations.
+
+```{r wave3-weights}
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(
+    wt_dem_95_inf_w3 = max(if_else(WAVE == 3, wt_dem_95_inf, NA_real_), na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(wt_dem_95_inf_w3 = if_else(is.infinite(wt_dem_95_inf_w3), NA_real_, wt_dem_95_inf_w3))
+
+cat("\nPanel decomposition complete.\n")
+```

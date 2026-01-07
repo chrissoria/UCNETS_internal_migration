@@ -1,0 +1,92 @@
+---
+title: "Create Long Format Panel Dataset"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+# Overview
+
+This notebook creates the LONG format panel dataset for the Migration Networks analysis.
+It loads raw panel data and sources three processing scripts:
+
+1. **01_create_long_variables.Rmd** - Creates lagged, cumulative, and transition variables
+2. **02_create_long_decomposition.Rmd** - Creates between/within decomposition
+3. **03_merge_external_data.Rmd** - Merges external datasets
+
+## Load Libraries
+
+```{r libraries}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(here)
+```
+
+## Load Raw Data
+
+```{r load-data}
+cat("Loading raw data...\n")
+df <- read_dta(here("data", "R_LONG_Moving_Paper_CS_file_24_02_24.dta"))
+
+# Ensure data is sorted by prim_key and WAVE
+df <- df %>% arrange(prim_key, WAVE)
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df),
+            n_distinct(df$prim_key)))
+```
+
+## Create Variables
+
+Sources lagged variables, cumulative variables, transition variables,
+derived variables, and variable aliases.
+
+```{r create-variables, child=here('code', '01_create_long_variables.Rmd')}
+```
+
+## Panel Decomposition
+
+Sources between/within decomposition, demographics, weights, and data saving.
+
+```{r panel-decomposition, child=here('code', '02_create_long_decomposition.Rmd')}
+```
+
+## Merge External Data
+
+Sources external datasets merged on prim_key_wave.
+
+```{r merge-external, child=here('code', '03_merge_external_data.Rmd')}
+```
+
+## Save Final Dataset
+
+```{r save-data}
+# Save the complete dataset (after all processing and merges)
+saveRDS(df, here("data", "out", "R_DF.rds"))
+cat("\nDataset saved to data/out/R_DF.rds\n")
+```
+
+## Summary
+
+```{r summary}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("DATA PROCESSING COMPLETE\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+cat(sprintf("\nFinal dataset: %d observations, %d variables\n",
+            nrow(df), ncol(df)))
+
+cat("\nKey outcome variables:\n")
+cat("  - Moved_w23: Any move between waves 2-3\n")
+cat("  - Moved_in_Bay_w23: Moved within Bay Area\n")
+cat("  - Moved_out_of_Bay_w23: Moved out of Bay Area\n")
+
+cat("\nData file saved:\n")
+cat("  - data/out/R_DF.rds\n")
+```

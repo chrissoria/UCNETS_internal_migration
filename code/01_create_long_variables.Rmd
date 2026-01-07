@@ -1,0 +1,250 @@
+---
+title: "Create Long Format Variables"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup-vars, include=FALSE}
+# This file is designed to be sourced as a child document from 00_create_long_data.Rmd
+# It expects 'df' to already be loaded in the environment
+```
+
+# Variable Creation
+
+This notebook creates lagged, cumulative, transition, and derived variables for the LONG format panel data.
+
+## Load Helper Functions
+
+```{r load-helpers}
+library(here)
+source(here("code", "helpers", "panel_helpers.R"))
+```
+
+## Lagged Variables
+
+Create lagged versions of key variables for panel analysis.
+
+```{r lagged-variables}
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(
+    lag_Kin_in_HH_N = lag(Kin_in_HH_N, order_by = WAVE),
+    lag_Owns_Home = lag(Owns_home, order_by = WAVE),
+    lag_Plan_Move = lag(Plan_to_Move, order_by = WAVE),
+    lag_New_Job = lag(LE_NewJob, order_by = WAVE),
+    lag_Full_Time = lag(Full_Time, order_by = WAVE),
+    lag_LT_BA = lag(LT_BA, order_by = WAVE),
+    lag_New_School = lag(LE_NewSchool, order_by = WAVE),
+    lag_Finan_Prob = lag(LE_FinanProb, order_by = WAVE),
+    lag_Moved_Town = lag(LE_MovedTown, order_by = WAVE),
+    lag_Mother_in_Hour = lag(Mother_in_Hour, order_by = WAVE),
+    lag_Father_in_Hour = lag(Father_in_Hour, order_by = WAVE),
+    lag_Nonkin_in_HH_N = lag(Nonkin_in_HH_N, order_by = WAVE),
+    lag_Kin_GT_Hour_N = lag(Kin_GT_Hour_N, order_by = WAVE),
+    lag_Kin_in_5_N = lag(Kin_in_5_N, order_by = WAVE),
+    lag_Nonkin_in_5_N = lag(Nonkin_in_5_N, order_by = WAVE),
+    lag_Nonkin_GT_Hour_N = lag(Nonkin_GT_Hour_N, order_by = WAVE),
+    lag_LEX_Birth = lag(LEX_Birth, order_by = WAVE),
+    lag_Marr_Cohab = lag(Marr_Cohab, order_by = WAVE),
+    lag_web = lag(web, order_by = WAVE)
+  ) %>%
+  ungroup()
+```
+
+## Past Financial Problems Variable
+
+Captures financial problems before wave 3.
+
+```{r past-financial-problems}
+df <- df %>%
+  mutate(
+    # Start with lagged financial problems (0 if NA)
+    past_finan_prob = if_else(lag_Finan_Prob == 1, 1, 0, missing = 0),
+    # Add current financial problems (treat NA as 0 to avoid NA propagation)
+    past_finan_prob = past_finan_prob + coalesce(LE_FinanProb, 0),
+    # Cap at 1 (binary indicator)
+    past_finan_prob = if_else(past_finan_prob >= 1, 1, 0)
+  )
+
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(past_finan_prob = if_else(WAVE == 3 & LEX_FinanProb == 1,
+                                    past_finan_prob - 1,
+                                    past_finan_prob)) %>%
+  ungroup()
+```
+
+## Cumulative Variables
+
+Track accumulated events that decay by 1 each period if event doesn't recur.
+
+```{r cumulative-variables}
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(
+    cu_NewJob = create_cumulative(LE_NewJob),
+    cu_NewSchool = create_cumulative(LE_NewSchool),
+    cu_past_finan_prob = create_cumulative(past_finan_prob),
+    cu_Plan_to_Move = create_cumulative(Plan_to_Move),
+    cu_Birth = create_cumulative(LEX_Birth),
+    cu_FinanProb = create_cumulative(LE_FinanProb)
+  ) %>%
+  ungroup()
+```
+
+## Lagged Cumulative Variables
+
+Create lagged cumulative variables with wave 3 adjustment.
+
+```{r lagged-cumulative}
+df <- create_lagged_cumulative(df, "cu_NewJob")
+df <- create_lagged_cumulative(df, "cu_NewSchool")
+df <- create_lagged_cumulative(df, "cu_Plan_to_Move")
+df <- create_lagged_cumulative(df, "cu_FinanProb")
+df <- create_lagged_cumulative(df, "cu_Birth")
+```
+
+## Transition Variables
+
+Capture status changes between waves. Transitions require both current and lagged values to be non-NA.
+
+```{r transition-variables}
+df <- df %>%
+  mutate(
+    # Marital status (simple indicator, NA if missing)
+    Marr_Cohab_Only = if_else(Marr_Cohab == 1, 1, 0, missing = NA_real_),
+
+    # Marital status transitions
+    Married_to_divorced = create_transition(Marr_Cohab, lag_Marr_Cohab, from_val = 1, to_val = 0),
+    Not_to_Married = create_transition(Marr_Cohab, lag_Marr_Cohab, from_val = 0, to_val = 1),
+
+    # Employment transitions
+    Fulltime_to_less = create_transition(Full_Time, lag_Full_Time, from_val = 1, to_val = 0),
+    Less_to_fulltime = create_transition(Full_Time, lag_Full_Time, from_val = 0, to_val = 1),
+
+    # Housing transitions
+    Homeowner_to_renter = create_transition(Owns_home, lag_Owns_Home, from_val = 1, to_val = 0),
+    Renter_to_homeowner = create_transition(Owns_home, lag_Owns_Home, from_val = 0, to_val = 1),
+
+    # Financial problem transitions
+    FinanProb_to_not = create_transition(LE_FinanProb, lag_Finan_Prob, from_val = 1, to_val = 0),
+    Not_to_FinanProb = create_transition(LE_FinanProb, lag_Finan_Prob, from_val = 0, to_val = 1)
+  )
+```
+
+## Lagged Transition Variables
+
+```{r lagged-transitions}
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(
+    lag_Married_to_divorced = lag(Married_to_divorced, order_by = WAVE),
+    lag_Not_to_Married = lag(Not_to_Married, order_by = WAVE),
+    lag_Fulltime_to_less = lag(Fulltime_to_less, order_by = WAVE),
+    lag_Less_to_fulltime = lag(Less_to_fulltime, order_by = WAVE),
+    lag_Homeowner_to_renter = lag(Homeowner_to_renter, order_by = WAVE),
+    lag_Renter_to_homeowner = lag(Renter_to_homeowner, order_by = WAVE),
+    lag_FinanProb_to_not = lag(FinanProb_to_not, order_by = WAVE),
+    lag_Not_to_FinanProb = lag(Not_to_FinanProb, order_by = WAVE)
+  ) %>%
+  ungroup()
+```
+
+## Derived Variables
+
+### Employment Status
+
+```{r employed-variable}
+df <- df %>%
+  mutate(
+    employed = case_when(
+      is.na(mode) ~ NA_real_,
+      Full_Time == 1 | Part_Time == 1 ~ 1,
+      TRUE ~ 0
+    )
+  )
+```
+
+### Moved_w23 Adjustment for Wave 1
+
+Adjust based on a19c_onlyw1 (time at current residence, Wave 1 only):
+- a19c_onlyw1 <= 2 means 2 years or less at current residence (moved recently)
+- a19c_onlyw1 >= 3 means more than 2 years at current residence (did not move recently)
+
+```{r moved-wave1-adjustment}
+df <- df %>%
+  mutate(
+    Moved_w23 = case_when(
+      WAVE == 1 & a19c_onlyw1 >= 3 ~ 0,  # 3+ years at residence = no recent move
+      WAVE == 1 & a19c_onlyw1 <= 2 ~ 1,  # 0-2 years at residence = recent move
+      TRUE ~ Moved_w23
+    )
+  )
+```
+
+### Combined Network Proximity Variables
+
+```{r network-proximity}
+df <- df %>%
+  mutate(
+    Kin_within_60_N = Kin_in_5_N + Kin_in_5_to_60_N,
+    Nonkin_within_60_N = Nonkin_in_5_N + Nonkin_in_5_to_60_N
+  ) %>%
+  group_by(prim_key) %>%
+  mutate(
+    lag_Kin_within_60_N = lag(Kin_within_60_N, order_by = WAVE),
+    lag_Nonkin_within_60_N = lag(Nonkin_within_60_N, order_by = WAVE)
+  ) %>%
+  ungroup()
+```
+
+### Fix Specific Observations for Moved_out_of_Bay_w23
+
+Use character strings to preserve exact integer values (avoids floating point precision issues).
+
+```{r fix-out-of-bay}
+problem_ids <- c("5000000000027", "6000000003997", "7000000003067",
+                 "8000000000852", "8000000000885")
+
+df <- df %>%
+  mutate(
+    Moved_out_of_Bay_w23 = if_else(
+      as.character(prim_key) %in% problem_ids & WAVE == 3,
+      0,
+      Moved_out_of_Bay_w23
+    )
+  )
+```
+
+### Education Variable
+
+Create BA_or_greater as the inverse of LT_BA (less than BA).
+
+```{r education-variable}
+df <- df %>%
+  mutate(
+    BA_or_greater = if_else(LT_BA == 1, 0, 1, missing = NA_real_)
+  ) %>%
+  group_by(prim_key) %>%
+  mutate(
+    lag_BA_or_greater = lag(BA_or_greater, order_by = WAVE)
+  ) %>%
+  ungroup()
+```
+
+### Variable Aliases
+
+Some analysis scripts use names without _N suffix.
+
+```{r variable-aliases}
+df <- df %>%
+  mutate(
+    Kin_GT_Hour = Kin_GT_Hour_N,
+    Nonkin_GT_Hour = Nonkin_GT_Hour_N,
+    lag_Kin_GT_Hour = lag_Kin_GT_Hour_N,
+    lag_Nonkin_GT_Hour = lag_Nonkin_GT_Hour_N
+  )
+
+cat("Variable creation complete.\n")
+```

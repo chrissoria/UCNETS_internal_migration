@@ -1,0 +1,273 @@
+---
+title: "Mixed Effects Panel Models (Young Adults)"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+# Overview
+
+This notebook runs mixed effects models with random intercepts and robust standard errors for the Migration Networks analysis. **Models focus on young adults (ages 21-30) only.**
+
+## Key Takeaways
+
+> **1. Focus on young adults only.** Older adults were dropped due to severe power limitations (EPV = 1.1 for out-of-Bay moves with only 30 events).
+>
+> **2. Out-of-Bay models are underpowered.** With 114 events and 27 predictors, EPV = 4.2 (below the guideline of 10). Interpret these results with caution.
+>
+> **3. Plan to Move and Within-Bay models have adequate power.** EPV = 14.0 and 8.7 respectively.
+>
+> **4. Models use Mundlak decomposition.** Within-person effects are comparable to fixed effects estimates (see Script 11 for validation).
+>
+> **5. Future consideration:** For out-of-Bay models, consider reducing predictors to improve EPV.
+
+## Statistical Power Summary
+
+| Outcome | Events | Predictors | EPV | Status |
+|---------|--------|------------|-----|--------|
+| Out-of-Bay | 114 | 27 | 4.2 | Underpowered |
+| Within-Bay | 235 | 27 | 8.7 | Marginal |
+| Plan to Move | 379 | 27 | 14.0 | OK |
+
+**Note:** Events Per Variable (EPV) should be ≥10 for stable estimates. Out-of-Bay results should be interpreted cautiously.
+
+## Load Libraries and Helpers
+
+```{r libraries}
+library(here)
+library(dplyr)
+
+# Source helper functions
+source(here("code", "helpers", "mixed_model_helpers.R"))
+```
+
+## Load Data
+
+```{r load-data}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df),
+            n_distinct(df$prim_key)))
+
+# Filter to young adults only
+df_young <- df %>% filter(agegroup == 0)
+
+cat(sprintf("\nYoung adults (agegroup=0): %d observations for %d individuals\n",
+            nrow(df_young),
+            n_distinct(df_young$prim_key)))
+
+# Show outcome event rates
+cat("\nOutcome event rates (young adults):\n")
+cat(sprintf("  Out-of-Bay moves: %d (%.1f%%)\n",
+            sum(df_young$Moved_out_of_Bay_w23, na.rm = TRUE),
+            100 * mean(df_young$Moved_out_of_Bay_w23, na.rm = TRUE)))
+cat(sprintf("  Within-Bay moves: %d (%.1f%%)\n",
+            sum(df_young$Moved_in_Bay_w23, na.rm = TRUE),
+            100 * mean(df_young$Moved_in_Bay_w23, na.rm = TRUE)))
+cat(sprintf("  Plan to Move:     %d (%.1f%%)\n",
+            sum(df_young$Plan_to_Move, na.rm = TRUE),
+            100 * mean(df_young$Plan_to_Move, na.rm = TRUE)))
+```
+
+# Predictor Configuration
+
+Define predictor groups - easy to modify in one place.
+
+```{r predictors}
+# Within-person lagged predictors
+within_predictors <- c(
+  "within_lag_Moved_Town",
+  "within_lag_Owns_Home",
+  "within_lag_Full_Time",
+  "within_lag_BA_or_greater",
+  "within_lag_New_Job",
+  "within_lag_New_School",
+  "within_lag_Finan_Prob",
+  "within_lag_Marr_Cohab",
+  "within_lag_Kin_within_60_N",
+  "within_lag_Nonkin_within_60_N",
+  "within_lag_Nonkin_in_HH_N",
+  "within_lag_Kin_in_HH_N",
+  "within_lag_Kin_GT_Hour",
+  "within_lag_Nonkin_GT_Hour",
+  "within_lag_LEX_Birth"
+)
+
+# Between-person mean predictors
+between_predictors <- c(
+  "between_web",
+  "between_BA_or_greater",
+  "between_Owns_home",
+  "between_employed",
+  "between_Marr_Cohab"
+)
+
+# Time-invariant demographic predictors
+demographic_predictors <- c(
+  "black_race",
+  "asian_race",
+  "other_race",
+  "latino_eth",
+  "female",
+  "between_age"
+)
+
+# Combine into base predictors
+base_predictors <- c(within_predictors, between_predictors, demographic_predictors)
+
+# Plan predictor (added to base for "with plan" models)
+plan_predictor <- "within_lag_Plan_Move"
+
+cat("Predictor counts:\n")
+cat("  Within-person:", length(within_predictors), "\n")
+cat("  Between-person:", length(between_predictors), "\n")
+cat("  Demographics:", length(demographic_predictors), "\n")
+cat("  TOTAL base predictors:", length(base_predictors), "\n")
+cat("  Plan predictor:", plan_predictor, "\n")
+```
+
+# Model Configuration
+
+Define all models in a single configuration list. Each model specifies:
+
+- `name`: Model identifier
+- `outcome`: Outcome variable
+- `age_group`: 0 = young (all models use young adults only)
+- `include_plan`: Whether to include plan predictor
+- `exclude_out_of_bay`: Whether to exclude out-of-bay movers (for within-bay models)
+
+```{r model-specs}
+model_specs <- list(
+  # Out-of-Bay models (CAUTION: EPV = 4.2, underpowered)
+  list(name = "out_bay_no_plan",
+       outcome = "Moved_out_of_Bay_w23",
+       age_group = 0,
+       include_plan = FALSE,
+       exclude_out_of_bay = FALSE),
+
+  list(name = "out_bay_with_plan",
+       outcome = "Moved_out_of_Bay_w23",
+       age_group = 0,
+       include_plan = TRUE,
+       exclude_out_of_bay = FALSE),
+
+  # Plan to Move model (EPV = 14.0, OK)
+  list(name = "plan_to_move",
+       outcome = "Plan_to_Move",
+       age_group = 0,
+       include_plan = FALSE,
+       exclude_out_of_bay = FALSE),
+
+  # Within-Bay models (EPV = 8.7, marginal)
+  list(name = "within_bay_no_plan",
+       outcome = "Moved_in_Bay_w23",
+       age_group = 0,
+       include_plan = FALSE,
+       exclude_out_of_bay = TRUE),
+
+  list(name = "within_bay_with_plan",
+       outcome = "Moved_in_Bay_w23",
+       age_group = 0,
+       include_plan = TRUE,
+       exclude_out_of_bay = TRUE)
+)
+
+cat("Total models to run:", length(model_specs), "\n")
+cat("\nNote: All models use young adults (agegroup = 0) only.\n")
+cat("Older adults excluded due to insufficient events (EPV < 2).\n")
+```
+
+# Run Models
+
+```{r run-models}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("RUNNING MIXED EFFECTS MODELS (YOUNG ADULTS ONLY)\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+all_results <- run_all_models(model_specs, df, base_predictors, plan_predictor)
+```
+
+# Export Results
+
+```{r export-results}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("EXPORTING RESULTS\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+# Out of Bay results (young adults only)
+export_results(
+  list(all_results$out_bay_no_plan,
+       all_results$out_bay_with_plan),
+  c("No_Plan", "With_Plan"),
+  "out_of_bay_moves_young_mixed.csv"
+)
+
+# Plan to Move results (young adults only)
+export_results(
+  list(all_results$plan_to_move),
+  c("Young"),
+  "plan_to_move_young_mixed.csv"
+)
+
+# Within Bay results (young adults only)
+export_results(
+  list(all_results$within_bay_no_plan,
+       all_results$within_bay_with_plan),
+  c("No_Plan", "With_Plan"),
+  "within_bay_moves_young_mixed.csv"
+)
+```
+
+# Model Summaries
+
+```{r summaries}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("MODEL SUMMARIES\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+print_all_summaries(all_results)
+```
+
+# Save Model Objects
+
+```{r save-models}
+models <- extract_model_objects(all_results)
+saveRDS(models, here("out", "mixed_models_young.rds"))
+cat("\nModel objects saved to out/mixed_models_young.rds\n")
+```
+
+# Summary
+
+```{r final-summary}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("MIXED EFFECTS MODELS COMPLETE (YOUNG ADULTS)\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+cat("\nModels run:", length(all_results), "\n")
+cat("Sample: Young adults (ages 21-30) only\n")
+cat("\nOutput files:\n")
+cat("  - out/out_of_bay_moves_young_mixed.csv\n")
+cat("  - out/plan_to_move_young_mixed.csv\n")
+cat("  - out/within_bay_moves_young_mixed.csv\n")
+cat("  - out/mixed_models_young.rds\n")
+
+cat("\n", paste(rep("-", 70), collapse = ""), "\n")
+cat("STATISTICAL POWER NOTES\n")
+cat(paste(rep("-", 70), collapse = ""), "\n")
+cat("
+- Out-of-Bay models: EPV = 4.2 (UNDERPOWERED - interpret with caution)
+- Within-Bay models: EPV = 8.7 (marginal)
+- Plan to Move model: EPV = 14.0 (adequate)
+
+Recommendation: Consider reducing predictors for out-of-Bay models
+to achieve EPV >= 10 (would require ~10-12 predictors max).
+")
+```

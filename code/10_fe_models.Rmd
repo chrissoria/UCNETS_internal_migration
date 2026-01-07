@@ -1,0 +1,268 @@
+---
+title: "Fixed Effects Panel Models (Young Adults)"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+# Overview
+
+This notebook runs **fixed effects panel models** with robust standard errors for the Migration Networks analysis. Fixed effects models estimate within-person effects by differencing out all time-invariant characteristics.
+
+**Models focus on young adults (ages 21-30) only.**
+
+## Key Takeaways
+
+> **1. Focus on young adults only.** Older adults were dropped due to severe power limitations (EPV = 1.1 for out-of-Bay moves with only 30 events).
+>
+> **2. Fixed effects models estimate within-person effects.** These are the causal estimates of interest - how changes in predictors for the *same person* relate to mobility outcomes.
+>
+> **3. Only time-varying predictors are included.** Demographics (race, sex) and between-person means are absorbed by the fixed effect and cannot be estimated.
+>
+> **4. Power is improved vs. mixed models.** With 15 predictors instead of 27, EPV improves substantially.
+>
+> **5. Robust standard errors (HC1) account for heteroskedasticity.**
+
+## Statistical Power Summary
+
+| Outcome | Events | Predictors | EPV | Status |
+|---------|--------|------------|-----|--------|
+| Out-of-Bay | 114 | 15 | 7.6 | Marginal |
+| Within-Bay | 235 | 15 | 15.7 | OK |
+| Plan to Move | 379 | 15 | 25.3 | OK |
+
+**Note:** EPV ≥10 is the guideline for stable estimates. Out-of-Bay is marginal but much improved from the mixed model (EPV = 4.2).
+
+## Load Libraries and Helpers
+
+```{r libraries}
+library(here)
+library(dplyr)
+
+# Source helper functions
+source(here("code", "helpers", "fe_model_helpers.R"))
+```
+
+## Load Data
+
+```{r load-data}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df),
+            n_distinct(df$prim_key)))
+
+# Filter to young adults only
+df_young <- df %>% filter(agegroup == 0)
+
+cat(sprintf("\nYoung adults (agegroup=0): %d observations for %d individuals\n",
+            nrow(df_young),
+            n_distinct(df_young$prim_key)))
+
+# Show outcome event rates
+cat("\nOutcome event rates (young adults):\n")
+cat(sprintf("  Out-of-Bay moves: %d (%.1f%%)\n",
+            sum(df_young$Moved_out_of_Bay_w23, na.rm = TRUE),
+            100 * mean(df_young$Moved_out_of_Bay_w23, na.rm = TRUE)))
+cat(sprintf("  Within-Bay moves: %d (%.1f%%)\n",
+            sum(df_young$Moved_in_Bay_w23, na.rm = TRUE),
+            100 * mean(df_young$Moved_in_Bay_w23, na.rm = TRUE)))
+cat(sprintf("  Plan to Move:     %d (%.1f%%)\n",
+            sum(df_young$Plan_to_Move, na.rm = TRUE),
+            100 * mean(df_young$Plan_to_Move, na.rm = TRUE)))
+```
+
+# Predictor Configuration
+
+Fixed effects models use only **time-varying predictors**. Demographics and between-person means are absorbed by the individual fixed effect.
+
+```{r predictors}
+# Time-varying predictors (lagged)
+# These are the ORIGINAL lagged variables, not the within-person deviations
+# The FE model will automatically demean these
+fe_predictors <- c(
+  # Prior mobility
+  "lag_Moved_Town",
+  # Housing & employment
+  "lag_Owns_Home",
+  "lag_Full_Time",
+  "lag_BA_or_greater",
+  # Life events
+  "lag_New_Job",
+  "lag_New_School",
+  "lag_Finan_Prob",
+  "lag_LEX_Birth",
+  # Partnership
+  "lag_Marr_Cohab",
+  # Network variables (CORE predictors)
+  "lag_Kin_within_60_N",
+  "lag_Nonkin_within_60_N",
+  "lag_Nonkin_in_HH_N",
+  "lag_Kin_in_HH_N",
+  "lag_Kin_GT_Hour",
+  "lag_Nonkin_GT_Hour"
+)
+
+# Plan predictor (added for "with plan" models)
+plan_predictor <- "lag_Plan_Move"
+
+cat("Predictor count:\n")
+cat("  Time-varying predictors:", length(fe_predictors), "\n")
+cat("  Plan predictor:", plan_predictor, "\n")
+cat("\nNote: Demographics (race, sex, age) are absorbed by the fixed effect.\n")
+cat("Between-person means are not needed - FE handles within-person estimation.\n")
+```
+
+# Model Configuration
+
+Define all models in a single configuration list. Each model specifies:
+
+- `name`: Model identifier
+- `outcome`: Outcome variable
+- `age_group`: 0 = young (all models use young adults only)
+- `include_plan`: Whether to include plan predictor
+- `exclude_out_of_bay`: Whether to exclude out-of-bay movers (for within-bay models)
+
+```{r model-specs}
+model_specs <- list(
+  # Out-of-Bay models (EPV = 7.6, marginal)
+  list(name = "out_bay_no_plan",
+       outcome = "Moved_out_of_Bay_w23",
+       age_group = 0,
+       include_plan = FALSE,
+       exclude_out_of_bay = FALSE),
+
+  list(name = "out_bay_with_plan",
+       outcome = "Moved_out_of_Bay_w23",
+       age_group = 0,
+       include_plan = TRUE,
+       exclude_out_of_bay = FALSE),
+
+  # Plan to Move model (EPV = 25.3, OK)
+  list(name = "plan_to_move",
+       outcome = "Plan_to_Move",
+       age_group = 0,
+       include_plan = FALSE,
+       exclude_out_of_bay = FALSE),
+
+  # Within-Bay models (EPV = 15.7, OK)
+  list(name = "within_bay_no_plan",
+       outcome = "Moved_in_Bay_w23",
+       age_group = 0,
+       include_plan = FALSE,
+       exclude_out_of_bay = TRUE),
+
+  list(name = "within_bay_with_plan",
+       outcome = "Moved_in_Bay_w23",
+       age_group = 0,
+       include_plan = TRUE,
+       exclude_out_of_bay = TRUE)
+)
+
+cat("Total models to run:", length(model_specs), "\n")
+cat("\nNote: All models use young adults (agegroup = 0) only.\n")
+cat("Older adults excluded due to insufficient events (EPV < 2).\n")
+```
+
+# Run Models
+
+```{r run-models}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("RUNNING FIXED EFFECTS MODELS (YOUNG ADULTS ONLY)\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+all_results <- run_all_fe_models(model_specs, df, fe_predictors, plan_predictor)
+```
+
+# Export Results
+
+```{r export-results}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("EXPORTING RESULTS\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+# Out of Bay results (young adults only)
+export_fe_results(
+  list(all_results$out_bay_no_plan,
+       all_results$out_bay_with_plan),
+  c("No_Plan", "With_Plan"),
+  "out_of_bay_moves_young_fe.csv"
+)
+
+# Plan to Move results (young adults only)
+export_fe_results(
+  list(all_results$plan_to_move),
+  c("Young"),
+  "plan_to_move_young_fe.csv"
+)
+
+# Within Bay results (young adults only)
+export_fe_results(
+  list(all_results$within_bay_no_plan,
+       all_results$within_bay_with_plan),
+  c("No_Plan", "With_Plan"),
+  "within_bay_moves_young_fe.csv"
+)
+```
+
+# Model Summaries
+
+```{r summaries}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("MODEL SUMMARIES\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+print_all_fe_summaries(all_results)
+```
+
+# Save Model Objects
+
+```{r save-models}
+models <- extract_fe_model_objects(all_results)
+saveRDS(models, here("out", "fe_models_young.rds"))
+cat("\nModel objects saved to out/fe_models_young.rds\n")
+```
+
+# Summary
+
+```{r final-summary}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("FIXED EFFECTS MODELS COMPLETE (YOUNG ADULTS)\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+
+cat("\nModels run:", length(all_results), "\n")
+cat("Sample: Young adults (ages 21-30) only\n")
+cat("Predictors:", length(fe_predictors), "time-varying variables\n")
+cat("\nOutput files:\n")
+cat("  - out/out_of_bay_moves_young_fe.csv\n")
+cat("  - out/plan_to_move_young_fe.csv\n")
+cat("  - out/within_bay_moves_young_fe.csv\n")
+cat("  - out/fe_models_young.rds\n")
+
+cat("\n", paste(rep("-", 70), collapse = ""), "\n")
+cat("STATISTICAL POWER NOTES\n")
+cat(paste(rep("-", 70), collapse = ""), "\n")
+cat("
+With 15 predictors (down from 27 in mixed models):
+
+- Out-of-Bay models: EPV = 114/15 = 7.6 (marginal, improved from 4.2)
+- Within-Bay models: EPV = 235/15 = 15.7 (adequate)
+- Plan to Move model: EPV = 379/15 = 25.3 (adequate)
+
+Fixed effects advantages:
+- Automatic within-person estimation (no Mundlak decomposition needed)
+- Fewer parameters = better power
+- Clean causal interpretation of within-person effects
+
+Trade-off:
+- Cannot estimate effects of time-invariant variables (demographics)
+- For between-person effects, run separate random effects models
+")
+```

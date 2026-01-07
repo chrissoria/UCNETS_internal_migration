@@ -1,0 +1,35 @@
+# Data files
+data/
+*.dta
+*.csv
+*.rds
+*.zsav
+
+# R files
+.RData
+.Rhistory
+.Rproj.user/
+
+# Mac system files
+.DS_Store
+
+# Microsoft Office
+*.docx
+*.xlsx
+*.doc
+*.xls
+~$*.doc*
+~$*.xls*
+
+# PDF literature/notes
+lit/
+
+# Output files (can regenerate from code)
+out/
+*.pdf
+*.html
+
+# Temporary files
+*~
+*.tmp
+*.bak

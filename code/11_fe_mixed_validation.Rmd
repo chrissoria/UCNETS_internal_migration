@@ -1,0 +1,312 @@
+---
+title: "Validation: Fixed Effects vs Mixed Model Equivalence"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+# Overview
+
+This notebook validates that our mixed effects models with within/between decomposition produce within-person coefficients equivalent to fixed effects estimates. This is a **sanity check** for internal use, not for the paper.
+
+## Key Takeaways
+
+> **1. The Mundlak approach works.** When within/between decomposition is done correctly, the within-person coefficient from a mixed model equals the fixed effects coefficient.
+>
+> **2. Decomposition must match the analysis sample.** Pre-computed within/between variables (calculated on the full dataset) won't produce exact FE equivalence when the model uses a filtered subset.
+>
+> **3. Our Script 10 models use pre-computed decomposition.** This means within coefficients are close to but not identical to FE. This is acceptable for our purposes but worth documenting.
+>
+> **4. For exact equivalence, recompute on the filtered sample.** This validation shows how to do it correctly.
+
+## The Mundlak/Chamberlain Approach
+
+In panel data, we often want to separate:
+
+- **Within-person effects**: How does a change in X for the *same person* relate to a change in Y?
+- **Between-person effects**: How do people with different average X differ in average Y?
+
+**Fixed effects** (FE) models estimate within-person effects by "demeaning" the data:
+
+$$Y_{it} - \bar{Y}_i = \beta(X_{it} - \bar{X}_i) + \epsilon_{it}$$
+
+**The Mundlak approach** includes both within-person deviations AND between-person means in a mixed model:
+
+$$Y_{it} = \beta_{within}(X_{it} - \bar{X}_i) + \beta_{between}\bar{X}_i + \alpha_i + \epsilon_{it}$$
+
+**Key result:** $\beta_{within}$ from the Mundlak model equals $\beta$ from the FE model.
+
+## Load Libraries
+
+```{r libraries}
+library(here)
+library(dplyr)
+library(lme4)
+library(plm)
+library(knitr)
+library(kableExtra)
+
+styled_table <- function(df, caption = NULL) {
+  kable(df, row.names = FALSE, caption = caption, digits = 6) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+```
+
+## Load Data
+
+```{r load-data}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+cat(sprintf("Full dataset: %d observations, %d individuals\n", nrow(df), n_distinct(df$prim_key)))
+```
+
+# Test 1: Using Pre-Computed Decomposition (Current Approach)
+
+The dataset has pre-computed `within_*` and `between_*` variables calculated on the **full panel**. Let's see what happens when we use these on a filtered subset.
+
+```{r test1-precomputed}
+# Filter to young adults with complete data
+test_data <- df %>%
+  filter(agegroup == 0) %>%
+  filter(!is.na(Moved_out_of_Bay_w23),
+         !is.na(within_lag_Kin_within_60_N),
+         !is.na(between_lag_Kin_within_60_N))
+
+cat(sprintf("Filtered sample: %d observations\n\n", nrow(test_data)))
+
+# Fixed Effects model
+pdata <- pdata.frame(test_data, index = c("prim_key", "WAVE"))
+fe_model <- plm(Moved_out_of_Bay_w23 ~ lag_Kin_within_60_N,
+                data = pdata, model = "within")
+fe_coef <- coef(fe_model)["lag_Kin_within_60_N"]
+
+# Mixed model with pre-computed decomposition
+mixed_precomputed <- lmer(Moved_out_of_Bay_w23 ~ within_lag_Kin_within_60_N +
+                          between_lag_Kin_within_60_N + (1 | prim_key),
+                          data = test_data, REML = TRUE)
+within_coef_pre <- fixef(mixed_precomputed)["within_lag_Kin_within_60_N"]
+
+# Comparison
+test1_results <- data.frame(
+  Method = c("Fixed Effects (plm)", "Mixed with Pre-computed Decomposition"),
+  Coefficient = c(fe_coef, within_coef_pre),
+  stringsAsFactors = FALSE
+)
+test1_results$Difference_from_FE <- test1_results$Coefficient - fe_coef
+
+styled_table(test1_results, "Test 1: Pre-computed Decomposition (Expect Mismatch)")
+```
+
+**Result:** The coefficients do NOT match because the within/between variables were computed on the full dataset, not the filtered subset.
+
+# Test 2: Recomputing Decomposition on Analysis Sample
+
+Now let's compute the within/between decomposition on the **same sample** used in the model.
+
+```{r test2-recomputed}
+# Recompute within/between on the filtered sample
+test_data_recomputed <- test_data %>%
+  group_by(prim_key) %>%
+  mutate(
+    person_mean = mean(lag_Kin_within_60_N, na.rm = TRUE),
+    within_recomputed = lag_Kin_within_60_N - person_mean
+  ) %>%
+  ungroup()
+
+# Mixed model with recomputed decomposition
+mixed_recomputed <- lmer(Moved_out_of_Bay_w23 ~ within_recomputed + person_mean + (1 | prim_key),
+                         data = test_data_recomputed, REML = TRUE)
+within_coef_re <- fixef(mixed_recomputed)["within_recomputed"]
+
+# Comparison
+test2_results <- data.frame(
+  Method = c("Fixed Effects (plm)",
+             "Mixed with Pre-computed Decomposition",
+             "Mixed with Recomputed Decomposition"),
+  Coefficient = c(fe_coef, within_coef_pre, within_coef_re),
+  stringsAsFactors = FALSE
+)
+test2_results$Difference_from_FE <- test2_results$Coefficient - fe_coef
+
+styled_table(test2_results, "Test 2: Recomputed Decomposition (Expect Match)")
+```
+
+**Result:** The recomputed decomposition matches FE exactly.
+
+# Test 3: Balanced Panel Validation
+
+For maximum rigor, let's test on a balanced panel (individuals with data in all waves).
+
+```{r test3-balanced}
+# Create balanced panel
+balanced <- df %>%
+  filter(agegroup == 0, WAVE %in% c(2, 3)) %>%
+  filter(!is.na(Moved_out_of_Bay_w23), !is.na(lag_Kin_within_60_N)) %>%
+  group_by(prim_key) %>%
+  filter(n() == 2) %>%
+  ungroup()
+
+cat(sprintf("Balanced panel: %d observations, %d individuals\n\n",
+            nrow(balanced), n_distinct(balanced$prim_key)))
+
+# Compute decomposition on balanced panel
+balanced <- balanced %>%
+  group_by(prim_key) %>%
+  mutate(
+    person_mean = mean(lag_Kin_within_60_N, na.rm = TRUE),
+    within_manual = lag_Kin_within_60_N - person_mean
+  ) %>%
+  ungroup()
+
+# Method 1: Fixed Effects (plm)
+pdata_bal <- pdata.frame(balanced, index = c("prim_key", "WAVE"))
+fe_balanced <- plm(Moved_out_of_Bay_w23 ~ lag_Kin_within_60_N,
+                   data = pdata_bal, model = "within")
+
+# Method 2: Mixed Effects (REML)
+mixed_reml <- lmer(Moved_out_of_Bay_w23 ~ within_manual + person_mean + (1 | prim_key),
+                   data = balanced, REML = TRUE)
+
+# Method 3: Mixed Effects (ML)
+mixed_ml <- lmer(Moved_out_of_Bay_w23 ~ within_manual + person_mean + (1 | prim_key),
+                 data = balanced, REML = FALSE)
+
+# Method 4: OLS with person dummies (should equal FE)
+ols_dummies <- lm(Moved_out_of_Bay_w23 ~ within_manual + factor(prim_key), data = balanced)
+
+# Comparison
+test3_results <- data.frame(
+  Method = c("Fixed Effects (plm)",
+             "Mixed Effects (REML)",
+             "Mixed Effects (ML)",
+             "OLS with Person Dummies"),
+  Coefficient = c(coef(fe_balanced)["lag_Kin_within_60_N"],
+                  fixef(mixed_reml)["within_manual"],
+                  fixef(mixed_ml)["within_manual"],
+                  coef(ols_dummies)["within_manual"]),
+  stringsAsFactors = FALSE
+)
+test3_results$Difference_from_FE <- test3_results$Coefficient - test3_results$Coefficient[1]
+
+styled_table(test3_results, "Test 3: Balanced Panel - All Methods Match")
+```
+
+**Result:** All four methods produce identical within-person coefficients.
+
+# Test 4: Multiple Variables
+
+Let's verify the equivalence holds for multiple predictors.
+
+```{r test4-multiple-vars}
+# Variables to test
+test_vars <- c("lag_Kin_within_60_N", "lag_Nonkin_within_60_N",
+               "lag_Owns_Home", "lag_Marr_Cohab")
+
+# Function to compare FE vs Mixed for a given variable
+compare_fe_mixed <- function(var, data) {
+  # Filter to complete cases for this variable
+  data_complete <- data %>%
+    filter(!is.na(.data[[var]]), !is.na(Moved_out_of_Bay_w23))
+
+  # Compute decomposition
+  data_complete <- data_complete %>%
+    group_by(prim_key) %>%
+    mutate(
+      person_mean = mean(.data[[var]], na.rm = TRUE),
+      within_dev = .data[[var]] - person_mean
+    ) %>%
+    ungroup()
+
+  # FE model
+  pdata <- pdata.frame(data_complete, index = c("prim_key", "WAVE"))
+  fe_form <- as.formula(paste("Moved_out_of_Bay_w23 ~", var))
+  fe_model <- tryCatch(
+    plm(fe_form, data = pdata, model = "within"),
+    error = function(e) NULL
+  )
+
+  if (is.null(fe_model)) return(NULL)
+
+  # Mixed model
+  mixed_model <- lmer(Moved_out_of_Bay_w23 ~ within_dev + person_mean + (1 | prim_key),
+                      data = data_complete, REML = TRUE)
+
+  data.frame(
+    Variable = var,
+    N = nrow(data_complete),
+    FE_Coef = coef(fe_model)[var],
+    Mixed_Within_Coef = fixef(mixed_model)["within_dev"],
+    stringsAsFactors = FALSE
+  )
+}
+
+# Run comparisons
+young_data <- df %>% filter(agegroup == 0)
+comparisons <- lapply(test_vars, compare_fe_mixed, data = young_data)
+comparisons <- do.call(rbind, comparisons[!sapply(comparisons, is.null)])
+comparisons$Difference <- comparisons$FE_Coef - comparisons$Mixed_Within_Coef
+comparisons$Match <- ifelse(abs(comparisons$Difference) < 1e-6, "Yes", "No")
+
+styled_table(comparisons, "Test 4: Multiple Variables - FE vs Mixed Equivalence")
+```
+
+# Summary
+
+```{r summary, results='asis'}
+cat("## Validation Results\n\n")
+
+cat("### What We Confirmed\n\n")
+cat("1. **The Mundlak approach works**: When decomposition is computed on the same sample,\n")
+cat("   within-person coefficients from mixed models EQUAL fixed effects estimates.\n\n")
+cat("2. **REML vs ML doesn't matter**: Both produce identical within-person coefficients.\n\n")
+cat("3. **The equivalence holds for multiple variables**: Not just one special case.\n\n")
+
+cat("### Implication for Script 10\n\n")
+cat("The mixed models in Script 10 use pre-computed decomposition variables.\n")
+cat("When filtering by age group, the within coefficients are **close but not identical** to FE.\n\n")
+cat("This is acceptable because:\n")
+cat("- The differences are small\n")
+cat("- The interpretation remains valid (within-person effects)\n")
+cat("- For publication-quality results, we could recompute decomposition per model\n\n")
+
+cat("### When to Recompute\n\n")
+cat("Recompute within/between decomposition when:\n")
+cat("- You need exact FE equivalence for a robustness check\n")
+cat("- The sample differs substantially from the full panel\n")
+cat("- You want to compare mixed model results directly to FE results\n")
+```
+
+# Appendix: How to Recompute Decomposition
+
+For reference, here's how to properly compute within/between decomposition:
+code on the **analysis sample**:
+
+```{r appendix-code, eval=FALSE}
+# Example: Recompute decomposition for a filtered sample
+analysis_data <- df %>%
+  filter(agegroup == 0) %>%  # Your filter conditions
+  filter(!is.na(outcome_var), !is.na(predictor_var))
+
+# Compute within/between on THIS sample
+analysis_data <- analysis_data %>%
+  group_by(prim_key) %>%
+  mutate(
+    between_predictor = mean(predictor_var, na.rm = TRUE),
+    within_predictor = predictor_var - between_predictor
+  ) %>%
+  ungroup()
+
+# Now the mixed model will match FE
+model <- lmer(outcome_var ~ within_predictor + between_predictor + (1 | prim_key),
+              data = analysis_data)
+```

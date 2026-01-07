@@ -1,0 +1,1028 @@
+---
+title: "Friendship Strategies and Outcomes: Do Strategies Predict Network Size and Psychological Distress?"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+options(width = 200)
+```
+
+```{r load-kable, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+styled_table <- function(df, caption = NULL) {
+  kable(df, row.names = FALSE, caption = caption) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+```
+
+# Overview
+
+This notebook examines whether **friendship-making strategies** predict **network** and **psychological well-being** outcomes among movers.
+
+## Key Takeaways
+
+> **1. Activities strategy shows the most consistent association with lower future distress.** People who engage in athletic, cultural, or event-based activities report lower future distress.
+>
+> **2. Non-Engagement predicts worse outcomes.** Preferring not to seek new friends is associated with higher future distress—a red flag for social withdrawal after moving.
+>
+> **3. Concurrent ≠ Prospective.** Cross-sectional associations (same wave) don't always hold when predicting future outcomes. The prospective lagged DV models are the stronger test.
+>
+> **4. Network effects are weaker than distress effects.** Strategies more clearly predict psychological outcomes than network size changes.
+>
+> **5. Young adults drive most patterns.** Older adults have smaller sample sizes for strategies (especially workplace), so findings primarily reflect young adult movers.
+
+**Context:**
+- **Strategy Prevalence** - How common is each strategy? How does this vary by age?
+
+**Main Analysis:**
+1. **Concurrent: Strategies and Distress** - Do strategies relate to psychological distress at the same time point?
+2. **Concurrent: Strategies and Networks** - Do strategies relate to network size at the same time point?
+3. **Prospective: Predicting Future Distress** - Do strategies at t predict psychological distress at t+1?
+4. **Prospective: Predicting Future Networks** - Do strategies at t predict network size at t+1?
+5. **Multivariate Models** - Regression models with controls
+6. **Summary** - Key findings and limitations
+
+## Load Libraries and Helpers
+
+```{r libraries}
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+source(here("code", "helpers", "descriptive_helpers.R"))
+```
+
+## Load Data
+
+```{r load-data}
+# Load main panel data
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+# Create female indicator
+df$female <- ifelse(df$gender == 2, 1, 0)
+
+# Load a19f strategy data
+a19f_raw <- read.csv(here("data", "in", "a19f_Master_with_prim_key.csv"), stringsAsFactors = FALSE)
+
+cat(sprintf("Main data: %d observations for %d unique individuals\n", nrow(df), n_distinct(df$prim_key)))
+cat(sprintf("Strategy data (a19f): %d observations\n", nrow(a19f_raw)))
+
+cat(sprintf("\nObservations by age group:\n"))
+cat(sprintf("  Young (agegroup=0): %d\n", sum(df$agegroup == 0)))
+cat(sprintf("  Old (agegroup=1): %d\n", sum(df$agegroup == 1)))
+```
+
+## Create Outcome Variables
+
+```{r create-outcomes}
+df <- df %>%
+  mutate(
+    # Distress Index (higher = more distress)
+    h16a_dist = 6 - h16a,
+    h16b_dist = 6 - h16b,
+    h16d_dist = 6 - h16d,
+    h16e_dist = 6 - h16e,
+    h16f_dist = 6 - h16f,
+    h16h_dist = 6 - h16h,
+    h16i_dist = 6 - h16i,
+    h16j_dist = 6 - h16j,
+    distress_index = rowMeans(cbind(h16a_dist, h16b_dist, h16c, h16d_dist, h16e_dist,
+                                     h16f_dist, h16g, h16h_dist, h16i_dist, h16j_dist), na.rm = FALSE),
+
+    # Local non-kin network size
+    nonkin_local = Nonkin_in_HH_N + Nonkin_in_5_N + Nonkin_in_5_to_60_N
+  )
+
+cat(sprintf("Distress index: N = %d, Mean = %.2f, SD = %.2f\n",
+            sum(!is.na(df$distress_index)),
+            mean(df$distress_index, na.rm = TRUE),
+            sd(df$distress_index, na.rm = TRUE)))
+cat(sprintf("Local non-kin: N = %d, Mean = %.2f, SD = %.2f\n",
+            sum(!is.na(df$nonkin_local)),
+            mean(df$nonkin_local, na.rm = TRUE),
+            sd(df$nonkin_local, na.rm = TRUE)))
+```
+
+## Prepare and Merge Strategy Data
+
+```{r prepare-strategies}
+# Extract prim_key and wave from prim_key_wave
+a19f <- a19f_raw %>%
+  mutate(
+    prim_key_wave = as.character(prim_key_wave),
+    WAVE = as.numeric(substr(prim_key_wave, nchar(prim_key_wave), nchar(prim_key_wave))),
+    prim_key = as.numeric(substr(prim_key_wave, 1, nchar(prim_key_wave) - 1))
+  )
+
+# Create strategy indicators (7 granular strategies)
+a19f <- a19f %>%
+  mutate(
+    strat_workplace = ifelse(Workplace.Socializing == 1, 1, 0),
+    strat_connections = ifelse(Friendship.Through.Connections == 1, 1, 0),
+    strat_community = ifelse(Religious.Community.Involvement == 1 | Secular.Volunteer.Service == 1, 1, 0),
+    strat_activities = ifelse(Athletic.Engagement == 1 | Cultural.Hobby.Participation == 1 |
+                               Broader.Event.and.Group.Participation == 1, 1, 0),
+    strat_local = ifelse(Local.Venue.Visitation == 1 | Neighborhood.Integration == 1, 1, 0),
+    strat_online = ifelse(Online.Social.Networking == 1, 1, 0),
+    strat_nonengagement = ifelse(Non.Engagement.Preference == 1, 1, 0)
+  )
+
+# Select strategy variables for merging
+a19f_strategies <- a19f %>%
+  select(prim_key, WAVE, starts_with("strat_"))
+
+# Merge strategies into main data
+df <- df %>%
+  left_join(a19f_strategies, by = c("prim_key", "WAVE"))
+
+cat(sprintf("Observations with strategy data: %d (%.1f%% of panel)\n",
+            sum(!is.na(df$strat_workplace)),
+            100 * mean(!is.na(df$strat_workplace))))
+```
+
+```{r strategy-labels}
+strategies <- c("strat_workplace", "strat_connections", "strat_community",
+                "strat_activities", "strat_local", "strat_online", "strat_nonengagement")
+strategy_labels <- c("Workplace", "Through Connections", "Community Orgs",
+                     "Activities", "Local Places", "Online", "Non-Engagement")
+```
+
+# Context: Strategy Prevalence
+
+Before examining outcomes, let's review how common each strategy is among movers.
+
+## Strategy Use by Age Group
+
+Movers were asked what steps they took to meet new people after moving. Young adults predominantly rely on workplace socializing (33%) and activities (32%), reflecting their life stage with active careers and social lives. Older adults rarely use workplace strategies (4%) but favor activities (31%) and local places (25%). Non-engagement—preferring not to actively seek new friends—is common in both groups (21% young, 24% old).
+
+```{r strategy-prevalence}
+df_strat <- df %>% filter(!is.na(strat_workplace))
+
+n_young <- sum(df_strat$agegroup == 0)
+n_old <- sum(df_strat$agegroup == 1)
+
+prevalence <- data.frame(
+  Strategy = strategy_labels,
+  Young_N = sapply(strategies, function(s) sum(df_strat[[s]][df_strat$agegroup == 0] == 1, na.rm = TRUE)),
+  Old_N = sapply(strategies, function(s) sum(df_strat[[s]][df_strat$agegroup == 1] == 1, na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Young_Pct = sprintf("%.1f%%", 100 * Young_N / n_young),
+    Old_Pct = sprintf("%.1f%%", 100 * Old_N / n_old),
+    Total_N = Young_N + Old_N,
+    Total_Pct = sprintf("%.1f%%", 100 * Total_N / nrow(df_strat))
+  ) %>%
+  select(Strategy, Young_N, Young_Pct, Old_N, Old_Pct, Total_N, Total_Pct)
+
+styled_table(prevalence, "Strategy Prevalence by Age Group")
+
+export_descriptive_table(prevalence, "strategy_prevalence_by_age.csv")
+```
+
+```{r prevalence-plot, fig.width=10, fig.height=6}
+plot_prev <- prevalence %>%
+  mutate(
+    Young = as.numeric(gsub("%", "", Young_Pct)),
+    Old = as.numeric(gsub("%", "", Old_Pct))
+  ) %>%
+  select(Strategy, Young, Old) %>%
+  pivot_longer(cols = c(Young, Old), names_to = "Age_Group", values_to = "Percent")
+
+ggplot(plot_prev, aes(x = reorder(Strategy, -Percent), y = Percent, fill = Age_Group)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("Young" = "#2166AC", "Old" = "#B2182B")) +
+  labs(
+    title = "Friendship Strategy Prevalence by Age Group",
+    subtitle = "Among movers who reported friendship-making strategies",
+    x = "",
+    y = "Percent Using Strategy",
+    fill = "Age Group"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 10),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"))
+```
+
+# 1. Concurrent: Strategies and Psychological Distress
+
+Do friendship strategies relate to psychological distress measured at the **same time point**? This is a cross-sectional association—we cannot infer causality, but can identify which strategies are associated with better or worse mental health.
+
+## 1.1 Overall Association
+
+This table compares mean distress levels between people who used each strategy versus those who did not, measured at the same time point. A positive difference means strategy users report higher distress (worse mental health); a negative difference means users report lower distress (better mental health). Look for non-engagement showing higher distress, which would suggest social withdrawal is associated with poorer psychological well-being.
+
+```{r conc-distress-sample}
+df_conc <- df %>% filter(!is.na(strat_workplace), !is.na(distress_index))
+cat(sprintf("Sample for concurrent distress analysis: %d observations\n", nrow(df_conc)))
+```
+
+```{r concurrent-distress}
+conc_distress <- data.frame(
+  Strategy = strategy_labels,
+  Used_N = sapply(strategies, function(s) sum(df_conc[[s]] == 1, na.rm = TRUE)),
+  Did_Not_Use_N = sapply(strategies, function(s) sum(df_conc[[s]] == 0, na.rm = TRUE)),
+  Distress_Used = sapply(strategies, function(s)
+    mean(df_conc$distress_index[df_conc[[s]] == 1], na.rm = TRUE)),
+  Distress_Not_Used = sapply(strategies, function(s)
+    mean(df_conc$distress_index[df_conc[[s]] == 0], na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Diff_Used_Minus_Not = round(Distress_Used - Distress_Not_Used, 3),
+    Distress_Used = round(Distress_Used, 3),
+    Distress_Not_Used = round(Distress_Not_Used, 3)
+  )
+
+styled_table(conc_distress, "Concurrent: Mean Distress by Strategy Use (Same Wave)")
+
+export_descriptive_table(conc_distress, "strategy_concurrent_distress.csv")
+```
+
+## 1.2 By Age Group
+
+Does the association between strategies and distress differ for young versus older adults? This table shows mean distress among strategy users, broken down by age group. Note that sample sizes (N) vary substantially—older adults rarely use workplace strategies, for example, so those cells have very few observations and should be interpreted cautiously.
+
+```{r conc-distress-age}
+conc_age <- df_conc %>%
+  filter(!is.na(agegroup)) %>%
+  group_by(agegroup) %>%
+  summarise(
+    N = n(),
+    across(all_of(strategies),
+           list(
+             n = ~sum(. == 1, na.rm = TRUE),
+             distress = ~mean(distress_index[. == 1], na.rm = TRUE)
+           )),
+    .groups = "drop"
+  )
+
+conc_age_table <- data.frame(
+  Strategy = strategy_labels,
+  Young_N = as.numeric(conc_age[conc_age$agegroup == 0, paste0(strategies, "_n")]),
+  Young_Distress = round(as.numeric(conc_age[conc_age$agegroup == 0, paste0(strategies, "_distress")]), 3),
+  Old_N = as.numeric(conc_age[conc_age$agegroup == 1, paste0(strategies, "_n")]),
+  Old_Distress = round(as.numeric(conc_age[conc_age$agegroup == 1, paste0(strategies, "_distress")]), 3),
+  stringsAsFactors = FALSE
+)
+
+styled_table(conc_age_table, "Concurrent: Distress by Strategy and Age Group")
+
+export_descriptive_table(conc_age_table, "strategy_concurrent_distress_by_age.csv")
+```
+
+# 2. Concurrent: Strategies and Network Size
+
+Do friendship strategies relate to local non-kin network size at the **same time point**? We measure network size as the count of non-kin ties within 60 minutes (household + within 5 min + 5-60 min away).
+
+## 2.1 Overall Association
+
+This table compares mean network size between people who used each strategy versus those who did not. A positive difference means strategy users have larger networks; a negative difference means smaller networks. We expect "Through Connections" (leveraging existing social ties) to show larger networks, and "Non-Engagement" to show smaller networks since people who don't actively seek friends may have fewer local ties.
+
+```{r conc-network-sample}
+df_conc_net <- df %>% filter(!is.na(strat_workplace), !is.na(nonkin_local))
+cat(sprintf("Sample for concurrent network analysis: %d observations\n", nrow(df_conc_net)))
+```
+
+```{r concurrent-network}
+conc_network <- data.frame(
+  Strategy = strategy_labels,
+  Used_N = sapply(strategies, function(s) sum(df_conc_net[[s]] == 1, na.rm = TRUE)),
+  Did_Not_Use_N = sapply(strategies, function(s) sum(df_conc_net[[s]] == 0, na.rm = TRUE)),
+  Network_Used = sapply(strategies, function(s)
+    mean(df_conc_net$nonkin_local[df_conc_net[[s]] == 1], na.rm = TRUE)),
+  Network_Not_Used = sapply(strategies, function(s)
+    mean(df_conc_net$nonkin_local[df_conc_net[[s]] == 0], na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Diff_Used_Minus_Not = round(Network_Used - Network_Not_Used, 2),
+    Network_Used = round(Network_Used, 2),
+    Network_Not_Used = round(Network_Not_Used, 2)
+  )
+
+styled_table(conc_network, "Concurrent: Mean Local Non-Kin Ties by Strategy Use (Same Wave)")
+
+export_descriptive_table(conc_network, "strategy_concurrent_network.csv")
+```
+
+## 2.2 By Age Group
+
+Does the association between strategies and network size differ by age? This table shows mean network size among strategy users for young and older adults separately. Young adults may benefit more from workplace strategies (they're more likely to be employed), while older adults may benefit more from community organizations (religious groups, volunteering).
+
+```{r conc-network-age}
+conc_net_age <- df_conc_net %>%
+  filter(!is.na(agegroup)) %>%
+  group_by(agegroup) %>%
+  summarise(
+    N = n(),
+    across(all_of(strategies),
+           list(
+             n = ~sum(. == 1, na.rm = TRUE),
+             network = ~mean(nonkin_local[. == 1], na.rm = TRUE)
+           )),
+    .groups = "drop"
+  )
+
+conc_net_age_table <- data.frame(
+  Strategy = strategy_labels,
+  Young_N = as.numeric(conc_net_age[conc_net_age$agegroup == 0, paste0(strategies, "_n")]),
+  Young_Network = round(as.numeric(conc_net_age[conc_net_age$agegroup == 0, paste0(strategies, "_network")]), 2),
+  Old_N = as.numeric(conc_net_age[conc_net_age$agegroup == 1, paste0(strategies, "_n")]),
+  Old_Network = round(as.numeric(conc_net_age[conc_net_age$agegroup == 1, paste0(strategies, "_network")]), 2),
+  stringsAsFactors = FALSE
+)
+
+styled_table(conc_net_age_table, "Concurrent: Network Size by Strategy and Age Group")
+
+export_descriptive_table(conc_net_age_table, "strategy_concurrent_network_by_age.csv")
+```
+
+# 3. Prospective: Predicting Future Distress
+
+Do strategies at time t predict psychological distress at time t+1? This is a stronger test of whether strategies *lead to* better or worse outcomes, controlling for baseline distress.
+
+**How the data is structured:**
+
+- **W1 → W2:** Strategies reported at Wave 1 predict distress at Wave 2
+- **W2 → W3:** Strategies reported at Wave 2 predict distress at Wave 3
+- **W3:** No follow-up (study ends)—excluded from prospective analysis
+
+These two transition periods are **pooled together** in the analysis. This means:
+
+1. The same person can appear twice if they reported strategies at both W1 and W2
+2. We're assuming strategy effects are similar across both transitions
+3. Sample sizes shown below reflect the combined W1→W2 and W2→W3 observations
+
+## Create Lead Outcomes
+
+```{r create-leads}
+df <- df %>%
+  arrange(prim_key, WAVE) %>%
+  group_by(prim_key) %>%
+  mutate(
+    distress_lead = lead(distress_index, 1),
+    nonkin_lead = lead(nonkin_local, 1),
+    distress_current = distress_index,
+    nonkin_current = nonkin_local
+  ) %>%
+  ungroup()
+```
+
+## Prospective Sample
+
+```{r prosp-distress-sample}
+df_prosp <- df %>%
+  filter(!is.na(strat_workplace), !is.na(distress_lead), !is.na(distress_current))
+
+cat(sprintf("Sample for prospective distress analysis: %d observations\n", nrow(df_prosp)))
+cat("\nBy wave (strategy reported at):\n")
+print(table(df_prosp$WAVE))
+```
+
+## 3.1 Distress at Next Wave by Strategy Use at Current Wave
+
+This is the key prospective table: it shows whether using a strategy NOW predicts distress at the NEXT wave. A negative difference means strategy users have lower future distress (better outcomes); a positive difference means higher future distress (worse outcomes). The "Activities" strategy (sports, hobbies, events) is associated with lower future distress. "Non-Engagement" is associated with higher future distress.
+
+```{r prospective-distress}
+prosp_distress <- data.frame(
+  Strategy = strategy_labels,
+  Used_N = sapply(strategies, function(s) sum(df_prosp[[s]] == 1, na.rm = TRUE)),
+  Did_Not_Use_N = sapply(strategies, function(s) sum(df_prosp[[s]] == 0, na.rm = TRUE)),
+  Future_Distress_Used = sapply(strategies, function(s)
+    mean(df_prosp$distress_lead[df_prosp[[s]] == 1], na.rm = TRUE)),
+  Future_Distress_Not_Used = sapply(strategies, function(s)
+    mean(df_prosp$distress_lead[df_prosp[[s]] == 0], na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Diff_Used_Minus_Not = round(Future_Distress_Used - Future_Distress_Not_Used, 3),
+    Future_Distress_Used = round(Future_Distress_Used, 3),
+    Future_Distress_Not_Used = round(Future_Distress_Not_Used, 3)
+  )
+
+styled_table(prosp_distress, "Prospective: Mean Distress at Next Wave by Strategy Use at Current Wave")
+
+export_descriptive_table(prosp_distress, "strategy_prospective_distress.csv")
+```
+
+```{r plot-prosp-distress-diff, fig.width=10, fig.height=6}
+ggplot(prosp_distress, aes(x = reorder(Strategy, Diff_Used_Minus_Not), y = Diff_Used_Minus_Not)) +
+  geom_bar(stat = "identity", fill = "#7B3294", width = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  labs(
+    title = "Prospective: Strategy Effect on Future Distress",
+    subtitle = "Difference in distress at t+1 (strategy users minus non-users)",
+    x = "",
+    y = "Difference in Future Distress (negative = better outcomes)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11)
+  )
+```
+
+**Reading this plot:** Bars extending LEFT (negative values) mean strategy users have LOWER future distress—that strategy is associated with better psychological outcomes. Bars extending RIGHT (positive values) mean strategy users have HIGHER future distress—worse outcomes. Activities shows the strongest protective association; Non-Engagement shows the strongest harmful association.
+
+## 3.2 By Age Group
+
+Do strategies predict future distress differently for young versus older adults? This table shows mean future distress among strategy users by age group. Strategies may be more protective for one age group than another—for example, workplace strategies might matter more for young adults whose social lives are more work-centered.
+
+```{r prosp-distress-age-diff}
+# Calculate difference for young adults only (users vs non-users)
+df_prosp_young <- df_prosp %>% filter(agegroup == 0)
+
+prosp_young_diff <- data.frame(
+  Strategy = strategy_labels,
+  Used_N = sapply(strategies, function(s) sum(df_prosp_young[[s]] == 1, na.rm = TRUE)),
+  Future_Distress_Used = sapply(strategies, function(s)
+    mean(df_prosp_young$distress_lead[df_prosp_young[[s]] == 1], na.rm = TRUE)),
+  Future_Distress_Not_Used = sapply(strategies, function(s)
+    mean(df_prosp_young$distress_lead[df_prosp_young[[s]] == 0], na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Diff_Used_Minus_Not = round(Future_Distress_Used - Future_Distress_Not_Used, 3)
+  )
+```
+
+```{r plot-prosp-distress-young, fig.width=10, fig.height=6}
+ggplot(prosp_young_diff, aes(x = reorder(Strategy, Diff_Used_Minus_Not), y = Diff_Used_Minus_Not)) +
+  geom_bar(stat = "identity", fill = "#7B3294", width = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  labs(
+    title = "Prospective: Strategy Effect on Future Distress (Young Adults Only)",
+    subtitle = "Difference in distress at t+1 (strategy users minus non-users), ages 21-30",
+    x = "",
+    y = "Difference in Future Distress (negative = better outcomes)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11)
+  )
+```
+
+**Reading this plot (Young Adults):** Among young adults, bars extending LEFT mean strategy users have lower future distress (protective). Bars extending RIGHT mean higher future distress (harmful). Compare this pattern to the overall sample to see if strategies work differently for young people.
+
+```{r prosp-distress-age}
+prosp_age <- df_prosp %>%
+  filter(!is.na(agegroup)) %>%
+  group_by(agegroup) %>%
+  summarise(
+    N = n(),
+    across(all_of(strategies),
+           list(
+             n = ~sum(. == 1, na.rm = TRUE),
+             distress = ~mean(distress_lead[. == 1], na.rm = TRUE)
+           )),
+    .groups = "drop"
+  )
+
+prosp_age_table <- data.frame(
+  Strategy = strategy_labels,
+  Young_N = as.numeric(prosp_age[prosp_age$agegroup == 0, paste0(strategies, "_n")]),
+  Young_Distress_t1 = round(as.numeric(prosp_age[prosp_age$agegroup == 0, paste0(strategies, "_distress")]), 3),
+  Old_N = as.numeric(prosp_age[prosp_age$agegroup == 1, paste0(strategies, "_n")]),
+  Old_Distress_t1 = round(as.numeric(prosp_age[prosp_age$agegroup == 1, paste0(strategies, "_distress")]), 3),
+  stringsAsFactors = FALSE
+)
+
+styled_table(prosp_age_table, "Prospective: Distress at t+1 by Strategy and Age")
+
+export_descriptive_table(prosp_age_table, "strategy_prospective_distress_by_age.csv")
+```
+
+# 4. Prospective: Predicting Future Network Size
+
+Do strategies at time t predict local non-kin network size at time t+1?
+
+**Data structure:** Same as Section 3—pooled W1→W2 and W2→W3 transitions. Wave 3 strategies excluded (no follow-up).
+
+## Prospective Sample
+
+```{r prosp-network-sample}
+df_prosp_net <- df %>%
+  filter(!is.na(strat_workplace), !is.na(nonkin_lead), !is.na(nonkin_current))
+
+cat(sprintf("Sample for prospective network analysis: %d observations\n", nrow(df_prosp_net)))
+```
+
+## 4.1 Network at Next Wave by Strategy Use at Current Wave
+
+Does using a friendship strategy predict having a larger local network at the next wave? A positive difference means strategy users end up with more local non-kin ties; a negative difference means fewer ties. We expect active strategies (Activities, Through Connections) to predict network growth, while Non-Engagement should predict smaller future networks.
+
+```{r prospective-network}
+prosp_network <- data.frame(
+  Strategy = strategy_labels,
+  Used_N = sapply(strategies, function(s) sum(df_prosp_net[[s]] == 1, na.rm = TRUE)),
+  Did_Not_Use_N = sapply(strategies, function(s) sum(df_prosp_net[[s]] == 0, na.rm = TRUE)),
+  Future_Network_Used = sapply(strategies, function(s)
+    mean(df_prosp_net$nonkin_lead[df_prosp_net[[s]] == 1], na.rm = TRUE)),
+  Future_Network_Not_Used = sapply(strategies, function(s)
+    mean(df_prosp_net$nonkin_lead[df_prosp_net[[s]] == 0], na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Diff_Used_Minus_Not = round(Future_Network_Used - Future_Network_Not_Used, 2),
+    Future_Network_Used = round(Future_Network_Used, 2),
+    Future_Network_Not_Used = round(Future_Network_Not_Used, 2)
+  )
+
+styled_table(prosp_network, "Prospective: Mean Network at Next Wave by Strategy Use at Current Wave")
+
+export_descriptive_table(prosp_network, "strategy_prospective_network.csv")
+```
+
+```{r plot-prosp-network-diff, fig.width=10, fig.height=6}
+ggplot(prosp_network, aes(x = reorder(Strategy, Diff_Used_Minus_Not), y = Diff_Used_Minus_Not)) +
+  geom_bar(stat = "identity", fill = "#7B3294", width = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  labs(
+    title = "Prospective: Strategy Effect on Future Network Size",
+    subtitle = "Difference in local non-kin ties at t+1 (strategy users minus non-users)",
+    x = "",
+    y = "Difference in Future Network Size (positive = more ties)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11)
+  )
+```
+
+**Reading this plot:** Bars extending RIGHT (positive values) mean strategy users have MORE local non-kin ties at the next wave—that strategy is associated with network growth. Bars extending LEFT (negative values) mean FEWER ties—network shrinkage. Look for active engagement strategies (Activities, Through Connections) showing positive effects, and Non-Engagement showing negative effects.
+
+## 4.2 By Age Group
+
+Do strategies predict future network size differently by age? This table shows mean future network size among strategy users for young and older adults. Network-building may work differently across life stages—older adults might benefit more from community-based strategies, while young adults might see more network growth from workplace connections.
+
+```{r prosp-network-age-diff}
+# Calculate difference for young adults only (users vs non-users)
+df_prosp_net_young <- df_prosp_net %>% filter(agegroup == 0)
+
+prosp_net_young_diff <- data.frame(
+  Strategy = strategy_labels,
+  Used_N = sapply(strategies, function(s) sum(df_prosp_net_young[[s]] == 1, na.rm = TRUE)),
+  Future_Network_Used = sapply(strategies, function(s)
+    mean(df_prosp_net_young$nonkin_lead[df_prosp_net_young[[s]] == 1], na.rm = TRUE)),
+  Future_Network_Not_Used = sapply(strategies, function(s)
+    mean(df_prosp_net_young$nonkin_lead[df_prosp_net_young[[s]] == 0], na.rm = TRUE)),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Diff_Used_Minus_Not = round(Future_Network_Used - Future_Network_Not_Used, 2)
+  )
+```
+
+```{r plot-prosp-network-young, fig.width=10, fig.height=6}
+ggplot(prosp_net_young_diff, aes(x = reorder(Strategy, Diff_Used_Minus_Not), y = Diff_Used_Minus_Not)) +
+  geom_bar(stat = "identity", fill = "#7B3294", width = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  labs(
+    title = "Prospective: Strategy Effect on Future Network Size (Young Adults Only)",
+    subtitle = "Difference in local non-kin ties at t+1 (strategy users minus non-users), ages 21-30",
+    x = "",
+    y = "Difference in Future Network Size (positive = more ties)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11)
+  )
+```
+
+**Reading this plot (Young Adults):** Among young adults, bars extending RIGHT mean strategy users have more local ties at the next wave (network growth). Bars extending LEFT mean fewer ties (network shrinkage). Compare this pattern to the overall sample to see if strategies work differently for young people's network building.
+
+```{r prosp-network-age}
+prosp_net_age <- df_prosp_net %>%
+  filter(!is.na(agegroup)) %>%
+  group_by(agegroup) %>%
+  summarise(
+    N = n(),
+    across(all_of(strategies),
+           list(
+             n = ~sum(. == 1, na.rm = TRUE),
+             network = ~mean(nonkin_lead[. == 1], na.rm = TRUE)
+           )),
+    .groups = "drop"
+  )
+
+prosp_net_age_table <- data.frame(
+  Strategy = strategy_labels,
+  Young_N = as.numeric(prosp_net_age[prosp_net_age$agegroup == 0, paste0(strategies, "_n")]),
+  Young_Network_t1 = round(as.numeric(prosp_net_age[prosp_net_age$agegroup == 0, paste0(strategies, "_network")]), 2),
+  Old_N = as.numeric(prosp_net_age[prosp_net_age$agegroup == 1, paste0(strategies, "_n")]),
+  Old_Network_t1 = round(as.numeric(prosp_net_age[prosp_net_age$agegroup == 1, paste0(strategies, "_network")]), 2),
+  stringsAsFactors = FALSE
+)
+
+styled_table(prosp_net_age_table, "Prospective: Network at t+1 by Strategy and Age")
+
+export_descriptive_table(prosp_net_age_table, "strategy_prospective_network_by_age.csv")
+```
+
+# 5. Multivariate Models
+
+Do strategy effects hold when controlling for demographics and baseline outcomes?
+
+## 5.1 Concurrent Models: Distress (Univariate)
+
+**What this tests:** Is using a strategy associated with distress *at the same time point*? This is a cross-sectional snapshot—we see who uses each strategy and their current distress level.
+
+**Limitation:** We cannot tell if strategies *cause* distress differences. For example, if Non-Engagement users have higher distress, it could be that (a) avoiding social contact leads to distress, OR (b) distressed people tend to avoid social contact. The direction of causality is unclear.
+
+We run separate models for each strategy (controlling for age and gender) to avoid multicollinearity since people use multiple strategies.
+
+```{r model-conc-distress-univariate}
+# Run univariate models for each strategy
+conc_distress_models <- lapply(strategies, function(s) {
+  formula <- as.formula(paste("distress_index ~", s, "+ agegroup + female"))
+  lm(formula, data = df_conc)
+})
+names(conc_distress_models) <- strategies
+
+# Extract coefficients
+conc_distress_coefs <- data.frame(
+  Strategy = strategy_labels,
+  Estimate = sapply(seq_along(strategies), function(i) coef(conc_distress_models[[i]])[2]),
+  SE = sapply(seq_along(strategies), function(i) summary(conc_distress_models[[i]])$coefficients[2, 2]),
+  p_value = sapply(seq_along(strategies), function(i) summary(conc_distress_models[[i]])$coefficients[2, 4]),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    CI_lower = Estimate - 1.96 * SE,
+    CI_upper = Estimate + 1.96 * SE,
+    Significant = ifelse(p_value < 0.05, "Yes", "No")
+  )
+
+styled_table(conc_distress_coefs %>%
+               mutate(across(c(Estimate, SE, CI_lower, CI_upper), ~round(., 3)),
+                      p_value = round(p_value, 4)) %>%
+               select(Strategy, Estimate, SE, CI_lower, CI_upper, p_value, Significant),
+             "Concurrent: Strategy Coefficients Predicting Distress (Univariate Models)")
+```
+
+```{r plot-conc-distress-coefs, fig.width=10, fig.height=6}
+ggplot(conc_distress_coefs, aes(x = reorder(Strategy, Estimate), y = Estimate, color = Significant)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2) +
+  scale_color_manual(values = c("Yes" = "#7B3294", "No" = "gray50")) +
+  coord_flip() +
+  labs(
+    title = "Concurrent: Strategy Effects on Distress",
+    subtitle = "Coefficients from separate univariate models (controlling for age, gender)",
+    x = "",
+    y = "Coefficient (positive = higher distress)",
+    color = "p < .05"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11),
+    legend.position = "top"
+  )
+```
+
+**Reading this plot:** Each point is the coefficient from a separate regression. Points to the RIGHT of zero indicate the strategy is associated with higher distress; points to the LEFT indicate lower distress. Error bars show 95% confidence intervals—if they cross zero, the effect is not statistically significant. Purple points are significant (p < .05).
+
+## 5.2 Concurrent Models: Network Size (Univariate)
+
+**What this tests:** Is using a strategy associated with network size *at the same time point*? This is a cross-sectional snapshot—we see who uses each strategy and their current number of local non-kin ties.
+
+**Limitation:** We cannot tell if strategies *cause* network differences. For example, if "Through Connections" users have larger networks, it could be that (a) leveraging connections builds networks, OR (b) people with large networks find it easier to use this strategy. The direction of causality is unclear.
+
+```{r model-conc-network-univariate}
+# Run univariate models for each strategy
+conc_network_models <- lapply(strategies, function(s) {
+  formula <- as.formula(paste("nonkin_local ~", s, "+ agegroup + female"))
+  lm(formula, data = df_conc_net)
+})
+names(conc_network_models) <- strategies
+
+# Extract coefficients
+conc_network_coefs <- data.frame(
+  Strategy = strategy_labels,
+  Estimate = sapply(seq_along(strategies), function(i) coef(conc_network_models[[i]])[2]),
+  SE = sapply(seq_along(strategies), function(i) summary(conc_network_models[[i]])$coefficients[2, 2]),
+  p_value = sapply(seq_along(strategies), function(i) summary(conc_network_models[[i]])$coefficients[2, 4]),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    CI_lower = Estimate - 1.96 * SE,
+    CI_upper = Estimate + 1.96 * SE,
+    Significant = ifelse(p_value < 0.05, "Yes", "No")
+  )
+
+styled_table(conc_network_coefs %>%
+               mutate(across(c(Estimate, SE, CI_lower, CI_upper), ~round(., 2)),
+                      p_value = round(p_value, 4)) %>%
+               select(Strategy, Estimate, SE, CI_lower, CI_upper, p_value, Significant),
+             "Concurrent: Strategy Coefficients Predicting Network Size (Univariate Models)")
+```
+
+```{r plot-conc-network-coefs, fig.width=10, fig.height=6}
+ggplot(conc_network_coefs, aes(x = reorder(Strategy, Estimate), y = Estimate, color = Significant)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2) +
+  scale_color_manual(values = c("Yes" = "#7B3294", "No" = "gray50")) +
+  coord_flip() +
+  labs(
+    title = "Concurrent: Strategy Effects on Network Size",
+    subtitle = "Coefficients from separate univariate models (controlling for age, gender)",
+    x = "",
+    y = "Coefficient (positive = more ties)",
+    color = "p < .05"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11),
+    legend.position = "top"
+  )
+```
+
+**Reading this plot:** Points to the RIGHT of zero indicate the strategy is associated with larger networks; points to the LEFT indicate smaller networks. Purple points are statistically significant (p < .05).
+
+## 5.3 Prospective Models: Future Distress (Lagged DV, Univariate)
+
+**What this tests:** Does using a strategy at time t predict distress at time *t+1*, controlling for current distress? This tests whether strategies predict *change* in distress over time.
+
+**Data:** Pooled W1→W2 and W2→W3 transitions (same person can appear twice).
+
+**Why this is stronger:** By controlling for current distress, we ask: "Among people with *similar* distress levels NOW, do strategy users have *different* distress LATER?" This rules out the possibility that distressed people simply choose different strategies—we're comparing people who started at the same place.
+
+**Interpretation:** A significant negative coefficient means the strategy predicts *improvement* (less distress later). A significant positive coefficient means the strategy predicts *worsening* (more distress later).
+
+```{r model-prosp-distress-univariate}
+# Run univariate models for each strategy (controlling for baseline distress)
+prosp_distress_models <- lapply(strategies, function(s) {
+  formula <- as.formula(paste("distress_lead ~", s, "+ distress_current + agegroup + female"))
+  lm(formula, data = df_prosp)
+})
+names(prosp_distress_models) <- strategies
+
+# Extract coefficients
+prosp_distress_coefs <- data.frame(
+  Strategy = strategy_labels,
+  Estimate = sapply(seq_along(strategies), function(i) coef(prosp_distress_models[[i]])[2]),
+  SE = sapply(seq_along(strategies), function(i) summary(prosp_distress_models[[i]])$coefficients[2, 2]),
+  p_value = sapply(seq_along(strategies), function(i) summary(prosp_distress_models[[i]])$coefficients[2, 4]),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    CI_lower = Estimate - 1.96 * SE,
+    CI_upper = Estimate + 1.96 * SE,
+    Significant = ifelse(p_value < 0.05, "Yes", "No")
+  )
+
+styled_table(prosp_distress_coefs %>%
+               mutate(across(c(Estimate, SE, CI_lower, CI_upper), ~round(., 3)),
+                      p_value = round(p_value, 4)) %>%
+               select(Strategy, Estimate, SE, CI_lower, CI_upper, p_value, Significant),
+             "Prospective: Strategy Coefficients Predicting Future Distress (Univariate Models)")
+```
+
+```{r plot-prosp-distress-coefs, fig.width=10, fig.height=6}
+ggplot(prosp_distress_coefs, aes(x = reorder(Strategy, Estimate), y = Estimate, color = Significant)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2) +
+  scale_color_manual(values = c("Yes" = "#7B3294", "No" = "gray50")) +
+  coord_flip() +
+  labs(
+    title = "Prospective: Strategy Effects on Future Distress (Lagged DV)",
+    subtitle = "Coefficients from separate models controlling for current distress, age, gender",
+    x = "",
+    y = "Coefficient (positive = higher future distress)",
+    color = "p < .05"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11),
+    legend.position = "top"
+  )
+```
+
+**Reading this plot:** These coefficients control for baseline distress, so they show the *change* in distress associated with each strategy. Points to the RIGHT mean strategy users have higher future distress (controlling for where they started); points to the LEFT mean lower future distress. Purple points are statistically significant.
+
+## 5.4 Prospective Models: Future Network (Lagged DV, Univariate)
+
+**What this tests:** Does using a strategy at time t predict network size at time *t+1*, controlling for current network size? This tests whether strategies predict *network growth* (or decline) over time.
+
+**Data:** Pooled W1→W2 and W2→W3 transitions (same person can appear twice).
+
+**Why this is stronger:** By controlling for current network size, we ask: "Among people with *similar* network sizes NOW, do strategy users have *larger* networks LATER?" This rules out the possibility that people with big networks simply choose different strategies—we're comparing people who started with similar networks.
+
+**Interpretation:** A significant positive coefficient means the strategy predicts *network growth*. A significant negative coefficient means the strategy predicts *network shrinkage*.
+
+```{r model-prosp-network-univariate}
+# Run univariate models for each strategy (controlling for baseline network)
+prosp_network_models <- lapply(strategies, function(s) {
+  formula <- as.formula(paste("nonkin_lead ~", s, "+ nonkin_current + agegroup + female"))
+  lm(formula, data = df_prosp_net)
+})
+names(prosp_network_models) <- strategies
+
+# Extract coefficients
+prosp_network_coefs <- data.frame(
+  Strategy = strategy_labels,
+  Estimate = sapply(seq_along(strategies), function(i) coef(prosp_network_models[[i]])[2]),
+  SE = sapply(seq_along(strategies), function(i) summary(prosp_network_models[[i]])$coefficients[2, 2]),
+  p_value = sapply(seq_along(strategies), function(i) summary(prosp_network_models[[i]])$coefficients[2, 4]),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    CI_lower = Estimate - 1.96 * SE,
+    CI_upper = Estimate + 1.96 * SE,
+    Significant = ifelse(p_value < 0.05, "Yes", "No")
+  )
+
+styled_table(prosp_network_coefs %>%
+               mutate(across(c(Estimate, SE, CI_lower, CI_upper), ~round(., 2)),
+                      p_value = round(p_value, 4)) %>%
+               select(Strategy, Estimate, SE, CI_lower, CI_upper, p_value, Significant),
+             "Prospective: Strategy Coefficients Predicting Future Network (Univariate Models)")
+```
+
+```{r plot-prosp-network-coefs, fig.width=10, fig.height=6}
+ggplot(prosp_network_coefs, aes(x = reorder(Strategy, Estimate), y = Estimate, color = Significant)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2) +
+  scale_color_manual(values = c("Yes" = "#7B3294", "No" = "gray50")) +
+  coord_flip() +
+  labs(
+    title = "Prospective: Strategy Effects on Future Network Size (Lagged DV)",
+    subtitle = "Coefficients from separate models controlling for current network, age, gender",
+    x = "",
+    y = "Coefficient (positive = more future ties)",
+    color = "p < .05"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11),
+    legend.position = "top"
+  )
+```
+
+**Reading this plot:** These coefficients control for baseline network size, so they show the *change* in network associated with each strategy. Points to the RIGHT mean strategy users have larger future networks (network growth); points to the LEFT mean smaller future networks (network shrinkage). Purple points are statistically significant.
+
+## 5.5 Age Interactions (Prospective Distress)
+
+Do strategy effects on future distress differ by age group? This model includes interaction terms (strategy × agegroup). A significant interaction means the strategy's effect differs for young vs. older adults. For example, if workplace:agegroup is significant and positive, it means workplace strategies are less protective (or more harmful) for older adults compared to young adults.
+
+```{r model-age-interactions}
+model_age_int <- lm(distress_lead ~ (strat_workplace + strat_connections + strat_community +
+                     strat_activities + strat_local + strat_online + strat_nonengagement) * agegroup +
+                     distress_current + female,
+                    data = df_prosp)
+
+cat("\n=== Prospective Model with Age Interactions ===\n")
+print(summary(model_age_int))
+```
+
+# 6. Visualizations
+
+```{r plot-concurrent, fig.width=10, fig.height=6}
+plot_conc <- conc_distress %>%
+  select(Strategy, Distress_Used, Distress_Not_Used) %>%
+  pivot_longer(cols = c(Distress_Used, Distress_Not_Used),
+               names_to = "Group", values_to = "Distress") %>%
+  mutate(Group = ifelse(Group == "Distress_Used", "Uses Strategy", "Does Not Use"))
+
+ggplot(plot_conc, aes(x = reorder(Strategy, -Distress), y = Distress, fill = Group)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("Uses Strategy" = "#2166AC", "Does Not Use" = "#B2182B")) +
+  labs(
+    title = "Concurrent: Psychological Distress by Strategy Use",
+    subtitle = "Same-wave association among movers",
+    x = "",
+    y = "Mean Distress Index (higher = worse)",
+    fill = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 10),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  coord_cartesian(ylim = c(1.5, 2.5))
+```
+
+```{r plot-prospective, fig.width=10, fig.height=6}
+plot_prosp <- prosp_distress %>%
+  select(Strategy, Future_Distress_Used, Future_Distress_Not_Used) %>%
+  pivot_longer(cols = c(Future_Distress_Used, Future_Distress_Not_Used),
+               names_to = "Group", values_to = "Distress") %>%
+  mutate(Group = ifelse(Group == "Future_Distress_Used", "Uses Strategy", "Does Not Use"))
+
+ggplot(plot_prosp, aes(x = reorder(Strategy, -Distress), y = Distress, fill = Group)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("Uses Strategy" = "#2166AC", "Does Not Use" = "#B2182B")) +
+  labs(
+    title = "Prospective: Psychological Distress at t+1 by Strategy at t",
+    subtitle = "Does strategy predict FUTURE distress?",
+    x = "",
+    y = "Mean Distress Index at t+1",
+    fill = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 10),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  coord_cartesian(ylim = c(1.5, 2.5))
+```
+
+```{r plot-network-compare, fig.width=12, fig.height=5}
+net_compare <- rbind(
+  conc_network %>%
+    mutate(Analysis = "Concurrent (same wave)") %>%
+    select(Strategy, Network_Used, Analysis),
+  prosp_network %>%
+    rename(Network_Used = Future_Network_Used) %>%
+    mutate(Analysis = "Prospective (next wave)") %>%
+    select(Strategy, Network_Used, Analysis)
+)
+
+ggplot(net_compare, aes(x = Strategy, y = Network_Used, fill = Analysis)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("Concurrent (same wave)" = "#2166AC", "Prospective (next wave)" = "#B2182B")) +
+  labs(
+    title = "Network Size by Strategy: Concurrent vs Prospective",
+    subtitle = "Among strategy users only",
+    x = "",
+    y = "Mean Local Non-Kin Ties",
+    fill = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 10),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", size = 14)
+  )
+```
+
+# 7. Summary
+
+```{r summary, results='asis'}
+# Get significant strategies from coefficient data frames
+get_sig_from_coefs <- function(coef_df) {
+  sig <- coef_df$Strategy[coef_df$p_value < 0.05]
+  if(length(sig) == 0) return("None")
+  paste(sig, collapse = ", ")
+}
+
+cat("## Key Findings\n\n")
+
+cat("### Sample Sizes\n")
+cat(sprintf("- **Concurrent analysis**: %d observations with strategy data\n", nrow(df_strat)))
+cat(sprintf("- **Prospective analysis (distress)**: %d observations (W1→W2 and W2→W3)\n", nrow(df_prosp)))
+cat(sprintf("- **Prospective analysis (network)**: %d observations\n", nrow(df_prosp_net)))
+
+cat("\n### Concurrent Associations (Same Wave)\n")
+cat(sprintf("- Strategies significantly associated with **distress** (p<.05): %s\n",
+            get_sig_from_coefs(conc_distress_coefs)))
+cat(sprintf("- Strategies significantly associated with **network size** (p<.05): %s\n",
+            get_sig_from_coefs(conc_network_coefs)))
+
+cat("\n### Prospective Effects (t → t+1, controlling for baseline)\n")
+cat(sprintf("- Strategies significantly predicting **future distress** (p<.05): %s\n",
+            get_sig_from_coefs(prosp_distress_coefs)))
+cat(sprintf("- Strategies significantly predicting **future network** (p<.05): %s\n",
+            get_sig_from_coefs(prosp_network_coefs)))
+
+cat("\n### Limitations\n")
+cat("- Wave 3 strategies have no t+1 follow-up (study ends)\n")
+cat("- a19f is only asked of movers (selection into sample)\n")
+cat("- Small cell sizes for some strategies, especially among older adults\n")
+cat("- Cross-sectional concurrent analysis cannot establish causality\n")
+```

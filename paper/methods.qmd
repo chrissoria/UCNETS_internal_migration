@@ -1,0 +1,46 @@
+---
+title: "Methods"
+format: pdf
+bibliography: "Fixed and Hybrid Effects Models.bib"
+---
+
+# Methods
+
+## Data
+
+## Measures
+
+### Outcome Variables
+
+### Network Variables
+
+### Control Variables
+
+## Analytical Strategy
+
+We estimate the determinants of residential mobility using a hybrid between-within (BW) panel model, also known as a "hybrid effects" or "correlated random effects" model [@allison_fixed_2009; @neuhaus_between-_1998]. This approach decomposes time-varying predictors into two components: between-person means (capturing stable individual differences) and within-person deviations from those means (capturing change over time) [@neuhaus_separating_2006]. The model takes the form:
+
+$$
+y_{it} = \alpha + \beta_W (x_{it} - \bar{x}_i) + \beta_B \bar{x}_i + \gamma z_i + u_i + \epsilon_{it}
+$$
+
+where $y_{it}$ is the binary mobility outcome for individual $i$ at wave $t$, $(x_{it} - \bar{x}_i)$ represents within-person deviations from the individual mean, $\bar{x}_i$ is the individual's mean across all observed waves (the between-person component), $z_i$ captures time-invariant characteristics, $u_i$ is the individual-specific random effect, and $\epsilon_{it}$ is the idiosyncratic error term.
+
+The within-person coefficient $\beta_W$ estimates the effect of change in a predictor on mobility, holding constant all stable individual characteristics. For linear models, this coefficient is algebraically equivalent to what would be obtained from a strict fixed effects specification [@allison_fixed_2009]. The between-person coefficient $\beta_B$ captures cross-sectional associations but does not have the same causal interpretation as the within-person estimate.
+
+This hybrid approach offers several advantages over strict fixed effects. First, it allows us to estimate effects of time-invariant characteristics (e.g., race, gender) that would otherwise be absorbed. Second, it provides explicit between-person estimates that can be compared to within-person effects, offering insight into whether cross-sectional patterns reflect causal processes or confounding by stable individual differences. Third, it retains the key identification strategy of fixed effects—using within-person variation to control for unobserved heterogeneity—while providing a richer set of estimates.
+
+### Model Specification
+
+We estimate linear probability models (LPM) with the hybrid specification. Although logistic regression is conventional for binary outcomes, LPM offers more straightforward interpretation of coefficients as changes in probability. For the hybrid model specifically, LPM also avoids the inconsistency issues that can arise with logistic between-within specifications [@neuhaus_between-_1998; @goetgeluk_conditional_2008]. We use cluster-robust standard errors to address heteroskedasticity inherent in LPM and account for repeated observations within individuals [@brumback_adjusting_2010].
+
+### Addressing Simultaneity
+
+For network variables where reverse causality is a concern—the possibility that mobility causes network change rather than the reverse—we lag predictors by one wave [@allison_fixed_2005]. This ensures that network characteristics measured at wave $t-1$ predict mobility observed at wave $t$, establishing temporal precedence. While lagging does not eliminate all endogeneity concerns, it rules out the interpretation that observed mobility caused the measured network change.
+
+### Sample and Transitions
+
+The panel includes three waves of data, yielding up to two potential transitions per individual (wave 1 to 2, wave 2 to 3). We pool transitions across waves, assuming the same underlying process governs mobility decisions at each transition. This pooled approach increases statistical power and allows estimation of wave effects to capture any period-specific factors.
+
+## References
+

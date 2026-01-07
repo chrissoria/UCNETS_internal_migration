@@ -1,0 +1,41 @@
+---
+title: "Appendix"
+format: pdf
+---
+
+# Appendix A: Variable Definitions
+
+## A.1 Moving Variables
+
+### Moved_out_of_Bay_w23
+
+**Definition:** Binary indicator (0/1) for whether the respondent moved out of the Bay Area between survey waves.
+
+**Source:** Derived from survey question `a19j` (waves 2-3 only):
+
+> "How far is where you live now from where you lived at the time of the previous interview? Is it..."
+>
+> 1. In the same neighborhood
+> 2. In a different neighborhood but in the same town
+> 3. In a different town but still in the Bay Area
+> 4. Out of the Bay Area, but still in California
+> 5. Out of California
+> 6. Other (recoded into categories 1-5)
+
+**Coding:** `Moved_out_of_Bay_w23 = 1` if response is 4 (Out of Bay, in California) or 5 (Out of California). Otherwise 0.
+
+**Wave 1 handling:** Wave 1 does not have question a19j. Instead, `a19c_onlyw1` (time at current residence) is used: respondents at residence ≤2 years are coded as moved (1), those ≥3 years as not moved (0).
+
+**Corrections:** Five cases were recoded from 1 to 0 at Wave 3 based on qualitative review of open-ended responses indicating local moves rather than out-of-Bay moves.
+
+### Moved_in_Bay_w23
+
+**Definition:** Binary indicator (0/1) for whether the respondent moved within the Bay Area between survey waves.
+
+**Source:** Derived from `a19j` responses 2 (different neighborhood, same town) or 3 (different town, still in Bay Area).
+
+### Moved_w23
+
+**Definition:** Binary indicator (0/1) for any move between survey waves, regardless of distance.
+
+**Source:** Derived from `a19j` responses 1-5 (any move reported).

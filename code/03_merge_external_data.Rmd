@@ -1,0 +1,455 @@
+---
+title: "Merge External Data"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup-merge, include=FALSE}
+# This file is designed to be sourced as a child document from 00_create_long_data.Rmd
+# It expects 'df' to already be loaded in the environment
+```
+
+# External Data Merge
+
+This notebook merges external datasets into the LONG format panel data.
+
+**Merge key:** `prim_key_wave` (combination of prim_key and WAVE, no underscore separator)
+
+## Load Helper Functions
+
+```{r load-helpers-merge}
+library(here)
+library(readxl)
+source(here("code", "helpers", "panel_helpers.R"))
+```
+
+## Create Merge Key in Main Data
+
+```{r create-merge-key}
+# Create prim_key_wave without underscore to match external data format
+df <- df %>%
+  mutate(prim_key_wave = paste0(as.character(prim_key), WAVE))
+
+cat(sprintf("Created prim_key_wave merge key for %d observations\n", nrow(df)))
+```
+
+## External Data Source 1: Steps to Make Friends (a19f)
+
+Open-ended responses about steps taken to meet new people, with coded categories.
+
+```{r load-a19f}
+cat("\n--- Merging Steps to Make Friends (a19f) ---\n")
+
+a19f <- read.csv(here("data", "in", "a19f_Master_with_prim_key.csv"), stringsAsFactors = FALSE)
+cat(sprintf("Loaded %d records\n", nrow(a19f)))
+
+# Convert prim_key_wave to character for matching
+a19f <- a19f %>%
+  mutate(prim_key_wave = as.character(prim_key_wave))
+```
+
+### Check for Duplicates
+
+```{r check-duplicates}
+n_dups <- sum(duplicated(a19f$prim_key_wave))
+if (n_dups > 0) {
+  warning(sprintf("a19f has %d duplicate prim_key_wave values", n_dups))
+}
+```
+
+### Rename and Select Columns
+
+```{r rename-columns}
+a19f <- a19f %>%
+  rename(
+    a19f_response = Response,
+    a19f_religious = Religious.Community.Involvement,
+    a19f_local_venue = Local.Venue.Visitation,
+    a19f_volunteer = Secular.Volunteer.Service,
+    a19f_online = Online.Social.Networking,
+    a19f_workplace = Workplace.Socializing,
+    a19f_athletic = Athletic.Engagement,
+    a19f_cultural_hobby = Cultural.Hobby.Participation,
+    a19f_neighborhood = Neighborhood.Integration,
+    a19f_events_groups = Broader.Event.and.Group.Participation,
+    a19f_through_connections = Friendship.Through.Connections,
+    a19f_non_engagement = Non.Engagement.Preference,
+    a19f_alternative = Alternative.Strategies,
+    a19f_not_clear = Not.Clear...Uncodeable.Responses,
+    a19f_no_match = No_Match
+  ) %>%
+  select(prim_key_wave, a19f_response,
+         a19f_religious, a19f_local_venue, a19f_volunteer, a19f_online,
+         a19f_workplace, a19f_athletic, a19f_cultural_hobby, a19f_neighborhood,
+         a19f_events_groups, a19f_through_connections, a19f_non_engagement,
+         a19f_alternative, a19f_not_clear, a19f_no_match)
+```
+
+### Check for Unmatched Records
+
+```{r check-unmatched}
+unmatched_right <- a19f %>%
+  filter(!(prim_key_wave %in% df$prim_key_wave))
+
+if (nrow(unmatched_right) > 0) {
+  cat(sprintf("WARNING: %d records in a19f have no match in main data:\n", nrow(unmatched_right)))
+  print(unmatched_right %>% select(prim_key_wave, a19f_response) %>% head(20))
+  if (nrow(unmatched_right) > 20) {
+    cat(sprintf("... and %d more\n", nrow(unmatched_right) - 20))
+  }
+} else {
+  cat("All a19f records matched to main data.\n")
+}
+```
+
+### Merge
+
+```{r merge-a19f}
+n_before <- nrow(df)
+df <- df %>%
+  left_join(a19f, by = "prim_key_wave")
+stopifnot(nrow(df) == n_before)
+
+n_matched <- sum(!is.na(df$a19f_response))
+cat(sprintf("Matched: %d of %d main observations (%.1f%%)\n",
+            n_matched, nrow(df), 100 * n_matched / nrow(df)))
+```
+
+### Create Collapsed Friend-Making Categories
+
+Based on empirical clustering analysis (see `code/explore_a19f_categories.R`), combine
+related categories into broader groupings. Creates both granular and combined versions.
+
+**Empirical basis:**
+- Hierarchical clustering groups workplace + through_connections (existing network ties)
+- Activity-based strategies (athletic, cultural_hobby, events_groups, etc.) cluster together
+- Non-engagement stands alone
+- PCA shows engagement vs. non-engagement as primary dimension
+
+```{r collapse-friend-categories}
+df <- df %>%
+  mutate(
+    # -----------------------------------------------------------------
+    # GRANULAR CATEGORIES (5 categories + non-engagement + unclear)
+    # -----------------------------------------------------------------
+
+    # How_Workplace: Workplace socializing (kept separate due to high frequency)
+    How_Workplace = case_when(
+      a19f_workplace == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Through_Connections: Meeting friends through existing connections
+    How_Through_Connections = case_when(
+      a19f_through_connections == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Community_Orgs: Religious + Volunteer (community-based organizations)
+    How_Community_Orgs = case_when(
+      a19f_religious == 1 | a19f_volunteer == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Activities: Athletic + Cultural/Hobby + Events/Groups (activity-based)
+    How_Activities = case_when(
+      a19f_athletic == 1 | a19f_cultural_hobby == 1 | a19f_events_groups == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Local_Places: Local Venue + Neighborhood (place-based socializing)
+    How_Local_Places = case_when(
+      a19f_local_venue == 1 | a19f_neighborhood == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Online: Online social networking (kept separate)
+    How_Online = case_when(
+      a19f_online == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Non_Engagement: Prefers not to actively seek new friends
+    How_Non_Engagement = case_when(
+      a19f_non_engagement == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Other_Unclear: Alternative strategies + Not clear/uncodeable
+    How_Other_Unclear = case_when(
+      a19f_alternative == 1 | a19f_not_clear == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # -----------------------------------------------------------------
+    # BROADER COMBINED CATEGORIES (4 categories)
+    # -----------------------------------------------------------------
+
+    # How_Network_Ties: Leveraging existing social structures
+    # (Workplace + Through Connections + Religious - these cluster together)
+    How_Network_Ties = case_when(
+      a19f_workplace == 1 | a19f_through_connections == 1 | a19f_religious == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Active_Outreach: All proactive activity-based strategies
+    # (Local venues, volunteer, online, athletic, cultural, neighborhood, events)
+    How_Active_Outreach = case_when(
+      a19f_local_venue == 1 | a19f_volunteer == 1 | a19f_online == 1 |
+      a19f_athletic == 1 | a19f_cultural_hobby == 1 | a19f_neighborhood == 1 |
+      a19f_events_groups == 1 ~ 1,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # How_Any_Engagement: Any active strategy (opposite of non-engagement)
+    # Useful for simple engaged vs. not engaged analysis
+    How_Any_Engagement = case_when(
+      a19f_non_engagement == 0 & !is.na(a19f_response) ~ 1,
+      a19f_non_engagement == 1 ~ 0,
+      is.na(a19f_response) ~ NA_real_,
+      TRUE ~ 0
+    )
+  )
+
+cat("Created collapsed friend-making categories:\n\n")
+cat("GRANULAR (7 categories):\n")
+cat("  How_Workplace          - Workplace socializing\n")
+cat("  How_Through_Connections - Through existing connections\n")
+cat("  How_Community_Orgs     - Religious + Volunteer organizations\n")
+cat("  How_Activities         - Athletic + Cultural/Hobby + Events/Groups\n")
+cat("  How_Local_Places       - Local Venue + Neighborhood\n")
+cat("  How_Online             - Online social networking\n")
+cat("  How_Non_Engagement     - Prefers not to seek new friends\n")
+cat("  How_Other_Unclear      - Alternative + Not clear\n")
+cat("\nBROADER (3 categories):\n")
+cat("  How_Network_Ties       - Workplace + Through Connections + Religious\n")
+cat("  How_Active_Outreach    - All proactive activity-based strategies\n")
+cat("  How_Any_Engagement     - Any active strategy (binary: engaged vs not)\n")
+```
+
+## External Data Source 2: Reasons for Moving (a19i)
+
+Open-ended responses about reasons for moving, with coded categories.
+
+```{r load-a19i}
+cat("\n--- Merging Reasons for Moving (a19i) ---\n")
+
+a19i <- read_excel(here("data", "in", "Final_Merged_Codes_a19i_alternate.xlsx"))
+cat(sprintf("Loaded %d records\n", nrow(a19i)))
+
+# Convert prim_key_wave to character for matching
+a19i <- a19i %>%
+  mutate(prim_key_wave = as.character(as.numeric(prim_key_wave)))
+```
+
+### Check for Duplicates (a19i)
+
+```{r check-duplicates-a19i}
+n_dups_a19i <- sum(duplicated(a19i$prim_key_wave))
+if (n_dups_a19i > 0) {
+  warning(sprintf("a19i has %d duplicate prim_key_wave values", n_dups_a19i))
+}
+```
+
+### Rename and Select Columns (a19i)
+
+```{r rename-columns-a19i}
+# Rename by position to handle corrupted column names
+new_names <- c("prim_key", "WAVE", "prim_key_wave", "a19i_response",
+               "a19i_partner_spouse", "a19i_relationship_end", "a19i_own_job_school",
+               "a19i_partner_job_school", "a19i_financial", "a19i_housing",
+               "a19i_new_environment", "a19i_family_support", "a19i_meet_friends",
+               "a19i_conflicts", "a19i_forced", "a19i_other", "a19i_not_clear",
+               "a19i_forced_financial", "a19i_not_forced_financial",
+               "a19i_financial_housing", "a19i_non_financial_housing",
+               "a19i_financial_family_support", "a19i_non_financial_family_support")
+names(a19i) <- new_names
+
+a19i <- a19i %>%
+  select(prim_key_wave, a19i_response,
+         a19i_partner_spouse, a19i_relationship_end, a19i_own_job_school,
+         a19i_partner_job_school, a19i_financial, a19i_housing,
+         a19i_new_environment, a19i_family_support, a19i_meet_friends,
+         a19i_conflicts, a19i_forced, a19i_other, a19i_not_clear,
+         a19i_forced_financial, a19i_not_forced_financial,
+         a19i_financial_housing, a19i_non_financial_housing,
+         a19i_financial_family_support, a19i_non_financial_family_support)
+```
+
+### Check for Unmatched Records (a19i)
+
+```{r check-unmatched-a19i}
+unmatched_right_a19i <- a19i %>%
+  filter(!(prim_key_wave %in% df$prim_key_wave))
+
+if (nrow(unmatched_right_a19i) > 0) {
+  cat(sprintf("WARNING: %d records in a19i have no match in main data:\n", nrow(unmatched_right_a19i)))
+  print(unmatched_right_a19i %>% select(prim_key_wave, a19i_response) %>% head(20))
+  if (nrow(unmatched_right_a19i) > 20) {
+    cat(sprintf("... and %d more\n", nrow(unmatched_right_a19i) - 20))
+  }
+} else {
+  cat("All a19i records matched to main data.\n")
+}
+```
+
+### Merge (a19i)
+
+```{r merge-a19i}
+n_before <- nrow(df)
+df <- df %>%
+  left_join(a19i, by = "prim_key_wave")
+stopifnot(nrow(df) == n_before)
+
+n_matched_a19i <- sum(!is.na(df$a19i_response))
+cat(sprintf("Matched: %d of %d main observations (%.1f%%)\n",
+            n_matched_a19i, nrow(df), 100 * n_matched_a19i / nrow(df)))
+```
+
+### Create Collapsed Move Reason Categories
+
+Based on suggested collapsing (4/9/24), combine related move reason categories.
+
+```{r collapse-move-reasons}
+df <- df %>%
+  mutate(
+    # Why_Spo_Part_&_End: Partner/Spouse OR Relationship End
+    Why_Spo_Part_End = case_when(
+      a19i_partner_spouse == 1 | a19i_relationship_end == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_Own_&_Part_Career: Own Job/School OR Partner's Job/School
+    Why_Own_Part_Career = case_when(
+      a19i_own_job_school == 1 | a19i_partner_job_school == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_Financial: Keep as is (already exists as a19i_financial)
+    Why_Financial = case_when(
+      a19i_financial == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_Housing: Keep as is (already exists as a19i_housing)
+    Why_Housing = case_when(
+      a19i_housing == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_New_Environ: Keep as is (already exists as a19i_new_environment)
+    Why_New_Environ = case_when(
+      a19i_new_environment == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_Family_&_Friends: Family Support OR Meet Friends
+    Why_Family_Friends = case_when(
+      a19i_family_support == 1 | a19i_meet_friends == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_Conflict_&_Forced: Conflicts OR Forced
+    Why_Conflict_Forced = case_when(
+      a19i_conflicts == 1 | a19i_forced == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    # Why_Other_&_Unclear: Other OR Not Clear
+    Why_Other_Unclear = case_when(
+      a19i_other == 1 | a19i_not_clear == 1 ~ 1,
+      is.na(a19i_response) ~ NA_real_,
+      TRUE ~ 0
+    )
+  )
+
+cat("Created collapsed move reason categories:\n")
+cat("  Why_Spo_Part_End     - Partner/Spouse + Relationship End\n")
+cat("  Why_Own_Part_Career  - Own Job/School + Partner's Job/School\n")
+cat("  Why_Financial        - Financial reasons\n")
+cat("  Why_Housing          - Housing reasons\n")
+cat("  Why_New_Environ      - New living environment\n")
+cat("  Why_Family_Friends   - Family Support + Meet Friends\n")
+cat("  Why_Conflict_Forced  - Conflicts + Forced to move\n")
+cat("  Why_Other_Unclear    - Other + Not clear\n")
+```
+
+## Summary
+
+```{r merge-summary}
+cat("\n--- External Data Merge Summary ---\n")
+
+cat("\nVariables added from a19f (Steps to Make Friends):\n")
+cat("  a19f_response           - Open-ended response text\n")
+cat("  a19f_religious          - Religious Community Involvement\n")
+cat("  a19f_local_venue        - Local Venue Visitation\n")
+cat("  a19f_volunteer          - Secular Volunteer Service\n")
+cat("  a19f_online             - Online Social Networking\n")
+cat("  a19f_workplace          - Workplace Socializing\n")
+cat("  a19f_athletic           - Athletic Engagement\n")
+cat("  a19f_cultural_hobby     - Cultural-Hobby Participation\n")
+cat("  a19f_neighborhood       - Neighborhood Integration\n")
+cat("  a19f_events_groups      - Broader Event and Group Participation\n")
+cat("  a19f_through_connections - Friendship Through Connections\n")
+cat("  a19f_non_engagement     - Non-Engagement Preference\n")
+cat("  a19f_alternative        - Alternative Strategies\n")
+cat("  a19f_not_clear          - Not Clear / Uncodeable Responses\n")
+cat("  a19f_no_match           - No Match flag\n")
+
+cat("\nCollapsed a19f categories (How_ prefix):\n")
+cat("  GRANULAR:\n")
+cat("    How_Workplace          - Workplace socializing\n")
+cat("    How_Through_Connections - Through existing connections\n")
+cat("    How_Community_Orgs     - Religious + Volunteer\n")
+cat("    How_Activities         - Athletic + Cultural/Hobby + Events/Groups\n")
+cat("    How_Local_Places       - Local Venue + Neighborhood\n")
+cat("    How_Online             - Online social networking\n")
+cat("    How_Non_Engagement     - Prefers not to seek new friends\n")
+cat("    How_Other_Unclear      - Alternative + Not clear\n")
+cat("  BROADER:\n")
+cat("    How_Network_Ties       - Workplace + Through Connections + Religious\n")
+cat("    How_Active_Outreach    - All proactive activity-based strategies\n")
+cat("    How_Any_Engagement     - Any active strategy (binary)\n")
+
+cat("\nVariables added from a19i (Reasons for Moving):\n")
+cat("  a19i_response           - Open-ended response text\n")
+cat("  a19i_partner_spouse     - Partner or spouse\n")
+cat("  a19i_relationship_end   - Relationship end\n")
+cat("  a19i_own_job_school     - Own job/school/career\n")
+cat("  a19i_partner_job_school - Partner's job/school/career\n")
+cat("  a19i_financial          - Financial\n")
+cat("  a19i_housing            - Housing, concretely\n")
+cat("  a19i_new_environment    - New living environment\n")
+cat("  a19i_family_support     - Family Support\n")
+cat("  a19i_meet_friends       - Meet and Make Friends\n")
+cat("  a19i_conflicts          - Conflicts\n")
+cat("  a19i_forced             - Forced to move\n")
+cat("  a19i_other              - Other reason\n")
+cat("  a19i_not_clear          - Not clear\n")
+cat("  a19i_forced_financial   - Forced Financial\n")
+cat("  a19i_not_forced_financial - Not Forced Financial\n")
+cat("  a19i_financial_housing  - Financial Housing\n")
+cat("  a19i_non_financial_housing - Non-Financial Housing\n")
+cat("  a19i_financial_family_support - Financial Family Support\n")
+cat("  a19i_non_financial_family_support - Non-Financial Family Support\n")
+
+cat("\nExternal data merge complete.\n")
+```

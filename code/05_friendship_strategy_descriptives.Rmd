@@ -1,0 +1,875 @@
+---
+title: "Friendship Strategy Descriptives"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+options(width = 200)
+```
+
+```{r load-kable, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Helper function for styled tables
+styled_table <- function(df, caption = NULL) {
+  kable(df, row.names = FALSE, caption = caption) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+```
+
+# Overview
+
+This notebook analyzes friendship-making strategies using collapsed categories from the a19f open-ended responses about "steps taken to meet new people."
+
+## Key Takeaways
+
+- **Life stage shapes strategy access**: Young adults leverage institutional settings like the workplace, while older adults rely more on community-based approaches—reflecting how social contexts shift across the life course.
+- **Larger networks and network-leveraging strategies go together**: People who make friends through existing connections tend to have more ties, raising questions about whether strategies build networks or networks enable strategies.
+- **Socioeconomic resources enable network-based strategies**: Education and employment provide access to institutional networks (workplace, professional connections), creating stratification in how people form new ties.
+- **Non-engagement is a meaningful category**: About one in five respondents prefer not to actively seek new friendships, and this holds across age groups—suggesting deliberate social boundary maintenance.
+- **Active Outreach strategies are more egalitarian**: Unlike network-leveraging strategies, activity-based approaches (community groups, local venues, hobbies) show less variation by education, employment, or homeownership.
+
+## Category Mapping
+
+The table below shows how original a19f response categories map to our collapsed categories (based on empirical clustering analysis in `code/explore_a19f_categories.R`):
+
+| Collapsed Category | Original a19f Categories |
+|-------------------|-------------------------|
+| **Workplace** | Workplace Socializing |
+| **Through Connections** | Friendship Through Connections |
+| **Community Orgs** | Religious Community Involvement<br>Secular Volunteer Service |
+| **Activities** | Athletic Engagement<br>Cultural Hobby Participation<br>Broader Event and Group Participation |
+| **Local Places** | Local Venue Visitation<br>Neighborhood Integration |
+| **Online** | Online Social Networking |
+| **Non-Engagement** | Non Engagement Preference |
+| **Other/Unclear** | Alternative Strategies<br>Not Clear/Uncodeable Responses |
+
+## Load Libraries and Helpers
+
+```{r libraries}
+library(here)
+library(dplyr)
+
+# Source helper functions
+source(here("code", "helpers", "descriptive_helpers.R"))
+```
+
+## Load Data
+
+```{r load-data, include=FALSE}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+# Create female indicator (gender: 1=Male, 2=Female)
+df$female <- ifelse(df$gender == 2, 1, 0)
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df),
+            n_distinct(df$prim_key)))
+```
+
+# How Do People Make New Friends?
+
+## Overall Percentages by Age Group
+
+What percentage of respondents reported using each friendship-making strategy?
+
+**Key patterns:** Friendship-making strategies vary substantially by age. Overall, activities (31.9%) and workplace (28.4%) are the most common strategies, while online networking is least common (13.1%). Among young adults, the workplace is the dominant strategy (33.3%), followed closely by activities (32.1%). In contrast, older adults rarely rely on workplace socializing (4.0%) and instead favor activities (31.0%) and local places (25.0%). Through Connections shows similar usage across age groups (18.6% young, 17.0% old), while Community Orgs is slightly higher among older adults (17.0% vs 13.7%). About one-fifth of both young (20.7%) and older (24.0%) respondents express a preference for non-engagement in making new friends.
+
+```{r friendship-overall}
+library(haven)
+
+# Load a19f data
+a19f_raw <- read.csv(here("data", "in", "a19f_Master_with_prim_key.csv"), stringsAsFactors = FALSE)
+a19f_raw$prim_key_wave <- as.character(a19f_raw$prim_key_wave)
+
+# Load main data to get agegroup
+df_main <- read_dta(here("data", "R_DF.dta"))
+df_main <- df_main %>%
+  mutate(prim_key_wave = paste0(as.character(prim_key), WAVE)) %>%
+  select(prim_key_wave, agegroup)
+
+# Merge to get agegroup
+a19f <- a19f_raw %>%
+  left_join(df_main, by = "prim_key_wave")
+
+n_young <- sum(a19f$agegroup == 0, na.rm = TRUE)
+n_old <- sum(a19f$agegroup == 1, na.rm = TRUE)
+n_total <- nrow(a19f)
+
+cat(sprintf("Respondents with a19f data: %d (Young: %d, Old: %d)\n", n_total, n_young, n_old))
+
+# Define strategies
+strategies <- c(
+  "Workplace",
+  "Through Connections",
+  "Community Orgs",
+  "Activities",
+  "Local Places",
+  "Online",
+  "Non-Engagement",
+  "Other/Unclear"
+)
+
+# Helper function to calculate N for a strategy
+calc_n <- function(data) {
+  c(
+    sum(data$Workplace.Socializing == 1, na.rm = TRUE),
+    sum(data$Friendship.Through.Connections == 1, na.rm = TRUE),
+    sum(data$Religious.Community.Involvement == 1 | data$Secular.Volunteer.Service == 1, na.rm = TRUE),
+    sum(data$Athletic.Engagement == 1 | data$Cultural.Hobby.Participation == 1 |
+        data$Broader.Event.and.Group.Participation == 1, na.rm = TRUE),
+    sum(data$Local.Venue.Visitation == 1 | data$Neighborhood.Integration == 1, na.rm = TRUE),
+    sum(data$Online.Social.Networking == 1, na.rm = TRUE),
+    sum(data$Non.Engagement.Preference == 1, na.rm = TRUE),
+    sum(data$Alternative.Strategies == 1 | data$Not.Clear...Uncodeable.Responses == 1, na.rm = TRUE)
+  )
+}
+
+# Broader categories for collapsed analysis
+strategies_broad <- c(
+  "Network Ties",
+  "Active Outreach",
+  "Any Engagement",
+  "Non-Engagement"
+)
+
+# Helper function to calculate N for broader categories
+calc_n_broad <- function(data) {
+  c(
+    # Network Ties: Workplace + Through Connections + Religious
+    sum(data$Workplace.Socializing == 1 |
+        data$Friendship.Through.Connections == 1 |
+        data$Religious.Community.Involvement == 1, na.rm = TRUE),
+
+    # Active Outreach: all proactive activity-based strategies
+    sum(data$Local.Venue.Visitation == 1 |
+        data$Secular.Volunteer.Service == 1 |
+        data$Online.Social.Networking == 1 |
+        data$Athletic.Engagement == 1 |
+        data$Cultural.Hobby.Participation == 1 |
+        data$Neighborhood.Integration == 1 |
+        data$Broader.Event.and.Group.Participation == 1, na.rm = TRUE),
+
+    # Any Engagement: inverse of non-engagement
+    sum(data$Non.Engagement.Preference == 0, na.rm = TRUE),
+
+    # Non-Engagement
+    sum(data$Non.Engagement.Preference == 1, na.rm = TRUE)
+  )
+}
+
+# Calculate for each age group
+young_data <- a19f %>% filter(agegroup == 0)
+old_data <- a19f %>% filter(agegroup == 1)
+
+young_n <- calc_n(young_data)
+old_n <- calc_n(old_data)
+total_n <- calc_n(a19f)
+
+# Build table
+friendship_overall <- data.frame(
+  Strategy = strategies,
+  Young_N = young_n,
+  Young_Pct = sprintf("%.1f%%", 100 * young_n / n_young),
+  Old_N = old_n,
+  Old_Pct = sprintf("%.1f%%", 100 * old_n / n_old),
+  Total_N = total_n,
+  Total_Pct = sprintf("%.1f%%", 100 * total_n / n_total),
+  stringsAsFactors = FALSE
+)
+
+# Add sample size row
+sample_row <- data.frame(
+  Strategy = "N (respondents)",
+  Young_N = n_young,
+  Young_Pct = "",
+  Old_N = n_old,
+  Old_Pct = "",
+  Total_N = n_total,
+  Total_Pct = "",
+  stringsAsFactors = FALSE
+)
+
+friendship_overall <- bind_rows(friendship_overall, sample_row)
+
+styled_table(friendship_overall, "Friendship Strategies by Age Group")
+
+export_descriptive_table(friendship_overall, "descriptives_friendship_strategies_overall.csv")
+```
+
+```{r friendship-overall-plot, fig.width=10, fig.height=6}
+library(ggplot2)
+library(tidyr)
+
+# Prepare data for plotting (exclude N row and Other/Unclear)
+plot_data <- friendship_overall %>%
+  filter(Strategy != "N (respondents)", Strategy != "Other/Unclear") %>%
+  select(Strategy, Young_N, Old_N) %>%
+  mutate(
+    Young_Pct = 100 * Young_N / n_young,
+    Old_Pct = 100 * Old_N / n_old
+  ) %>%
+  select(Strategy, Young_Pct, Old_Pct) %>%
+  pivot_longer(cols = c(Young_Pct, Old_Pct), names_to = "Age_Group", values_to = "Percentage") %>%
+  mutate(
+    Age_Group = ifelse(Age_Group == "Young_Pct", "Young (21-30)", "Old (50-70)"),
+    # Order strategies by total usage
+    Strategy = factor(Strategy, levels = c("Activities", "Workplace", "Local Places",
+                                            "Through Connections", "Non-Engagement",
+                                            "Community Orgs", "Online"))
+  )
+
+ggplot(plot_data, aes(x = Strategy, y = Percentage, fill = Age_Group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(values = c("Young (21-30)" = "#2166AC", "Old (50-70)" = "#B2182B")) +
+  labs(
+    title = "Friendship-Making Strategies by Age Group",
+    subtitle = "Percentage of respondents reporting each strategy",
+    x = "",
+    y = "Percentage",
+    fill = "Age Group"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 25, hjust = 1, size = 10),
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.major.x = element_blank()
+  ) +
+  coord_cartesian(ylim = c(0, 40))
+```
+
+## By Demographic Group
+
+Percentages by demographic subgroups (columns show % within each group).
+
+**Key patterns:** Age drives the largest differences in friendship strategies. Workplace dominates for young adults (33.3%) but drops sharply for older adults (4.0%). Gender differences are modest, though women use community organizations more than men (17.0% vs 8.8%). Married individuals rely more on workplace (32.2% vs 25.7%) and less on activities (28.0% vs 34.6%) compared to unmarried respondents. Black respondents show notably high community organization participation (33.3%), while Latino respondents favor activities (40.6%).
+
+```{r friendship-by-demo}
+# Get additional demographic variables from main data
+df_demo <- read_dta(here("data", "R_DF.dta"))
+df_demo <- df_demo %>%
+  mutate(prim_key_wave = paste0(as.character(prim_key), WAVE)) %>%
+  select(prim_key_wave, agegroup, gender, Marr_Cohab, Eth_black, Eth_asian, Eth_latino)
+
+# Create female indicator
+df_demo$female <- ifelse(df_demo$gender == 2, 1, 0)
+
+# Merge with a19f
+a19f_demo <- a19f_raw %>%
+  left_join(df_demo, by = "prim_key_wave")
+
+# Define demographic groups
+demo_groups <- list(
+  "Young" = list(var = "agegroup", val = 0),
+  "Old" = list(var = "agegroup", val = 1),
+  "Male" = list(var = "female", val = 0),
+  "Female" = list(var = "female", val = 1),
+  "Not Married" = list(var = "Marr_Cohab", val = 0),
+  "Married" = list(var = "Marr_Cohab", val = 1),
+  "Black" = list(var = "Eth_black", val = 1),
+  "Asian" = list(var = "Eth_asian", val = 1),
+  "Latino" = list(var = "Eth_latino", val = 1)
+)
+
+# Build results table
+friendship_demo <- data.frame(Strategy = strategies, stringsAsFactors = FALSE)
+
+for (grp_name in names(demo_groups)) {
+  grp <- demo_groups[[grp_name]]
+  grp_data <- a19f_demo %>% filter(.data[[grp$var]] == grp$val)
+  n_grp <- nrow(grp_data)
+
+  grp_n <- calc_n(grp_data)
+  friendship_demo[[grp_name]] <- sprintf("%.1f%%", 100 * grp_n / n_grp)
+}
+
+# Add Total column
+friendship_demo$Total <- sprintf("%.1f%%", 100 * total_n / n_total)
+
+# Add N row
+n_row <- data.frame(Strategy = "N", stringsAsFactors = FALSE)
+for (grp_name in names(demo_groups)) {
+  grp <- demo_groups[[grp_name]]
+  n_row[[grp_name]] <- as.character(sum(a19f_demo[[grp$var]] == grp$val, na.rm = TRUE))
+}
+n_row$Total <- as.character(n_total)
+
+friendship_demo <- bind_rows(friendship_demo, n_row)
+
+styled_table(friendship_demo, "Friendship Strategies by Demographic Group")
+
+export_descriptive_table(friendship_demo, "descriptives_friendship_strategies_demo.csv")
+```
+
+```{r friendship-demo-plot, fig.width=10, fig.height=8}
+# Prepare data for plotting (Gender and Race/Ethnicity groups only)
+plot_demo_data <- friendship_demo %>%
+  filter(Strategy != "N", Strategy != "Other/Unclear") %>%
+  select(Strategy, Male, Female, Black, Asian, Latino) %>%
+  mutate(across(-Strategy, ~as.numeric(gsub("%", "", .x)))) %>%
+  pivot_longer(cols = -Strategy, names_to = "Group", values_to = "Percentage") %>%
+  mutate(
+    Category = case_when(
+      Group %in% c("Male", "Female") ~ "Gender",
+      Group %in% c("Black", "Asian", "Latino") ~ "Race/Ethnicity"
+    ),
+    # Order strategies by total usage
+    Strategy = factor(Strategy, levels = c("Activities", "Workplace", "Local Places",
+                                            "Through Connections", "Non-Engagement",
+                                            "Community Orgs", "Online")),
+    # Set factor levels for groups
+    Group = factor(Group, levels = c("Male", "Female", "Black", "Asian", "Latino"))
+  )
+
+ggplot(plot_demo_data, aes(x = Strategy, y = Percentage, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~Category, ncol = 1, scales = "free_x") +
+  scale_fill_manual(values = c(
+    "Male" = "#2166AC",
+    "Female" = "#B2182B",
+    "Black" = "#1B9E77",
+    "Asian" = "#D95F02",
+    "Latino" = "#7570B3"
+  )) +
+  labs(
+    title = "Friendship-Making Strategies by Demographics",
+    subtitle = "Percentage of respondents reporting each strategy",
+    x = "",
+    y = "Percentage",
+    fill = "Group"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 25, hjust = 1, size = 10),
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.major.x = element_blank(),
+    strip.text = element_text(face = "bold", size = 11)
+  ) +
+  coord_cartesian(ylim = c(0, 45))
+```
+
+## By Socioeconomic Status
+
+Percentages by education, homeownership, and employment status.
+
+**Key patterns:** Education and employment status shape friendship strategies. BA+ holders rely more on workplace (30.0% vs 18.9%) and through connections (20.4% vs 7.8%) than those without a BA. Full-time workers heavily use workplace strategies (40.8%), while those not working full-time favor activities (41.1%) and community organizations (18.9%). Homeowners use local places more than renters (23.6% vs 15.7%), while renters rely more on workplace (30.4% vs 18.9%) and online strategies (14.5% vs 6.6%).
+
+```{r friendship-by-ses}
+# Get SES variables from main data
+df_ses <- read_dta(here("data", "R_DF.dta"))
+df_ses <- df_ses %>%
+  mutate(prim_key_wave = paste0(as.character(prim_key), WAVE)) %>%
+  select(prim_key_wave, LT_BA, Owns_home, Full_Time)
+
+# Create BA+ indicator (inverse of LT_BA)
+df_ses$BA_plus <- ifelse(df_ses$LT_BA == 1, 0, 1)
+
+# Merge with a19f
+a19f_ses <- a19f_raw %>%
+  left_join(df_ses, by = "prim_key_wave")
+
+# Define SES groups (showing both categories for each variable)
+ses_groups <- list(
+  "BA+" = list(var = "BA_plus", val = 1),
+  "No BA" = list(var = "BA_plus", val = 0),
+  "Homeowner" = list(var = "Owns_home", val = 1),
+  "Renter" = list(var = "Owns_home", val = 0),
+  "Full-time" = list(var = "Full_Time", val = 1),
+  "Not FT" = list(var = "Full_Time", val = 0)
+)
+
+# Build results table
+friendship_ses <- data.frame(Strategy = strategies, stringsAsFactors = FALSE)
+
+for (grp_name in names(ses_groups)) {
+  grp <- ses_groups[[grp_name]]
+  grp_data <- a19f_ses %>% filter(.data[[grp$var]] == grp$val)
+  n_grp <- nrow(grp_data)
+
+  grp_n <- calc_n(grp_data)
+  friendship_ses[[grp_name]] <- sprintf("%.1f%%", 100 * grp_n / n_grp)
+}
+
+# Add Total column
+friendship_ses$Total <- sprintf("%.1f%%", 100 * total_n / n_total)
+
+# Add N row
+n_row_ses <- data.frame(Strategy = "N", stringsAsFactors = FALSE)
+for (grp_name in names(ses_groups)) {
+  grp <- ses_groups[[grp_name]]
+  n_row_ses[[grp_name]] <- as.character(sum(a19f_ses[[grp$var]] == grp$val, na.rm = TRUE))
+}
+n_row_ses$Total <- as.character(n_total)
+
+friendship_ses <- bind_rows(friendship_ses, n_row_ses)
+
+styled_table(friendship_ses, "Friendship Strategies by Socioeconomic Status")
+
+export_descriptive_table(friendship_ses, "descriptives_friendship_strategies_ses.csv")
+```
+
+## By Network Size
+
+Average network size for those who use vs. don't use each strategy.
+
+This table compares mean network sizes between strategy users and non-users. "NonKin_Use" shows the average number of non-kin ties for respondents who use that strategy, while "NonKin_NoUse" shows the average for those who don't. The "sig" columns indicate whether the difference is statistically significant based on t-tests (*** p<.001, ** p<.01, * p<.05). The same pattern applies to kin ties.
+
+**Key patterns:** People who make new friends through certain strategies tend to have larger networks. Those who use Through Connections have more non-kin ties (8.11 vs 7.05*) and more kin ties (3.12 vs 2.66*) than those who don't. Similarly, people who make friends through Community Orgs (8.27 vs 7.07*), Local Places (8.06 vs 7.07*), and Workplace (7.84 vs 7.00*) have larger non-kin networks. In contrast, those who prefer Non-Engagement or use Online strategies tend to have smaller networks, though these differences are not statistically significant.
+
+```{r friendship-by-network-avg}
+# Get network variables from main data
+df_net <- read_dta(here("data", "R_DF.dta"))
+df_net <- df_net %>%
+  mutate(
+    prim_key_wave = paste0(as.character(prim_key), WAVE),
+    TotalKin = ImmedKin + ExtKin
+  ) %>%
+  select(prim_key_wave, NonKin, TotalKin)
+
+# Merge with a19f
+a19f_net <- a19f_raw %>%
+  left_join(df_net, by = "prim_key_wave")
+
+cat(sprintf("Overall means: NonKin = %.2f, Kin = %.2f\n\n",
+            mean(a19f_net$NonKin, na.rm = TRUE),
+            mean(a19f_net$TotalKin, na.rm = TRUE)))
+
+# Strategy variable mappings
+strategy_vars <- list(
+  "Workplace" = "Workplace.Socializing",
+  "Through Connections" = "Friendship.Through.Connections",
+  "Community Orgs" = c("Religious.Community.Involvement", "Secular.Volunteer.Service"),
+  "Activities" = c("Athletic.Engagement", "Cultural.Hobby.Participation", "Broader.Event.and.Group.Participation"),
+  "Local Places" = c("Local.Venue.Visitation", "Neighborhood.Integration"),
+  "Online" = "Online.Social.Networking",
+  "Non-Engagement" = "Non.Engagement.Preference",
+  "Other/Unclear" = c("Alternative.Strategies", "Not.Clear...Uncodeable.Responses")
+)
+
+# Helper function to check if strategy is used
+uses_strategy <- function(data, vars) {
+  if (length(vars) == 1) {
+    return(data[[vars]] == 1)
+  } else {
+    result <- rep(FALSE, nrow(data))
+    for (v in vars) {
+      result <- result | (data[[v]] == 1)
+    }
+    return(result)
+  }
+}
+
+# Function to format p-value with stars
+format_p <- function(p) {
+  if (is.na(p)) return("")
+  if (p < 0.001) return("***")
+  if (p < 0.01) return("**")
+  if (p < 0.05) return("*")
+  return("")
+}
+
+# Calculate mean network size for users vs non-users with t-tests
+friendship_net_avg <- data.frame(Strategy = character(), stringsAsFactors = FALSE)
+
+for (strat_name in names(strategy_vars)) {
+  vars <- strategy_vars[[strat_name]]
+
+  use_idx <- uses_strategy(a19f_net, vars)
+  users <- a19f_net[use_idx, ]
+  non_users <- a19f_net[!use_idx, ]
+
+  # T-tests for NonKin and Kin
+  ttest_nonkin <- t.test(users$NonKin, non_users$NonKin)
+  ttest_kin <- t.test(users$TotalKin, non_users$TotalKin)
+
+  friendship_net_avg <- rbind(friendship_net_avg, data.frame(
+    Strategy = strat_name,
+    N_Use = nrow(users),
+    NonKin_Use = sprintf("%.2f", mean(users$NonKin, na.rm = TRUE)),
+    NonKin_NoUse = sprintf("%.2f", mean(non_users$NonKin, na.rm = TRUE)),
+    NonKin_sig = format_p(ttest_nonkin$p.value),
+    Kin_Use = sprintf("%.2f", mean(users$TotalKin, na.rm = TRUE)),
+    Kin_NoUse = sprintf("%.2f", mean(non_users$TotalKin, na.rm = TRUE)),
+    Kin_sig = format_p(ttest_kin$p.value),
+    stringsAsFactors = FALSE
+  ))
+}
+
+styled_table(friendship_net_avg, "Average Network Size by Strategy Use (t-test: *** p<.001, ** p<.01, * p<.05)")
+
+export_descriptive_table(friendship_net_avg, "descriptives_friendship_strategies_network_avg.csv")
+```
+
+```{r friendship-network-plot, fig.width=10, fig.height=6}
+# Prepare data for plotting NonKin ties only
+plot_net_data <- friendship_net_avg %>%
+  filter(Strategy != "Other/Unclear") %>%
+  mutate(
+    NonKin_Use_num = as.numeric(NonKin_Use),
+    NonKin_NoUse_num = as.numeric(NonKin_NoUse),
+    has_sig = NonKin_sig != ""
+  ) %>%
+  select(Strategy, NonKin_Use_num, NonKin_NoUse_num, has_sig) %>%
+  pivot_longer(cols = c(NonKin_Use_num, NonKin_NoUse_num),
+               names_to = "Group", values_to = "NonKin_Ties") %>%
+  mutate(
+    Group = ifelse(Group == "NonKin_Use_num", "Use Strategy", "Don't Use Strategy"),
+    Group = factor(Group, levels = c("Use Strategy", "Don't Use Strategy")),
+    # Order by difference (Use - NoUse)
+    Strategy = factor(Strategy, levels = c("Community Orgs", "Through Connections",
+                                            "Local Places", "Workplace", "Activities",
+                                            "Online", "Non-Engagement"))
+  )
+
+# Create indicator for significance to add to plot
+sig_data <- friendship_net_avg %>%
+  filter(Strategy != "Other/Unclear", NonKin_sig != "") %>%
+  mutate(
+    NonKin_Use_num = as.numeric(NonKin_Use),
+    Strategy = factor(Strategy, levels = c("Community Orgs", "Through Connections",
+                                            "Local Places", "Workplace", "Activities",
+                                            "Online", "Non-Engagement"))
+  )
+
+ggplot(plot_net_data, aes(x = Strategy, y = NonKin_Ties, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(data = sig_data, aes(x = Strategy, y = NonKin_Use_num + 0.3, label = "*"),
+            size = 6, inherit.aes = FALSE, color = "black") +
+  scale_fill_manual(values = c("Use Strategy" = "#2166AC",
+                                "Don't Use Strategy" = "#B2182B")) +
+  labs(
+    title = "Non-Kin Network Size by Friendship Strategy Use",
+    subtitle = "* indicates significant difference (p < .05) between users and non-users",
+    x = "",
+    y = "Mean Number of Non-Kin Ties",
+    fill = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 25, hjust = 1, size = 10),
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.major.x = element_blank()
+  ) +
+  coord_cartesian(ylim = c(0, 9))
+```
+
+## By Network Size (Terciles)
+
+Percentages using each strategy within network size terciles (Low/Medium/High).
+
+```{r friendship-by-network-terciles}
+# Create terciles for NonKin
+nonkin_terciles <- quantile(a19f_net$NonKin, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+a19f_net <- a19f_net %>%
+  mutate(
+    NonKin_tercile = case_when(
+      NonKin <= nonkin_terciles[2] ~ "Low",
+      NonKin <= nonkin_terciles[3] ~ "Med",
+      TRUE ~ "High"
+    ),
+    NonKin_tercile = factor(NonKin_tercile, levels = c("Low", "Med", "High"))
+  )
+
+# Create terciles for Kin
+kin_terciles <- quantile(a19f_net$TotalKin, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+a19f_net <- a19f_net %>%
+  mutate(
+    Kin_tercile = case_when(
+      TotalKin <= kin_terciles[2] ~ "Low",
+      TotalKin <= kin_terciles[3] ~ "Med",
+      TRUE ~ "High"
+    ),
+    Kin_tercile = factor(Kin_tercile, levels = c("Low", "Med", "High"))
+  )
+
+cat("NonKin tercile cutpoints:", nonkin_terciles, "\n")
+cat("Kin tercile cutpoints:", kin_terciles, "\n\n")
+
+# Define network groups
+net_groups <- list(
+  "NonKin Low" = list(var = "NonKin_tercile", val = "Low"),
+  "NonKin Med" = list(var = "NonKin_tercile", val = "Med"),
+  "NonKin High" = list(var = "NonKin_tercile", val = "High"),
+  "Kin Low" = list(var = "Kin_tercile", val = "Low"),
+  "Kin Med" = list(var = "Kin_tercile", val = "Med"),
+  "Kin High" = list(var = "Kin_tercile", val = "High")
+)
+
+# Build results table
+friendship_net <- data.frame(Strategy = strategies, stringsAsFactors = FALSE)
+
+for (grp_name in names(net_groups)) {
+  grp <- net_groups[[grp_name]]
+  grp_data <- a19f_net %>% filter(.data[[grp$var]] == grp$val)
+  n_grp <- nrow(grp_data)
+
+  grp_n <- calc_n(grp_data)
+  friendship_net[[grp_name]] <- sprintf("%.1f%%", 100 * grp_n / n_grp)
+}
+
+# Add Total column
+friendship_net$Total <- sprintf("%.1f%%", 100 * total_n / n_total)
+
+# Add N row
+n_row_net <- data.frame(Strategy = "N", stringsAsFactors = FALSE)
+for (grp_name in names(net_groups)) {
+  grp <- net_groups[[grp_name]]
+  n_row_net[[grp_name]] <- as.character(sum(a19f_net[[grp$var]] == grp$val, na.rm = TRUE))
+}
+n_row_net$Total <- as.character(n_total)
+
+friendship_net <- bind_rows(friendship_net, n_row_net)
+
+styled_table(friendship_net, "Friendship Strategies by Network Size (Terciles)")
+
+export_descriptive_table(friendship_net, "descriptives_friendship_strategies_network_terciles.csv")
+```
+
+# Broader Categories Analysis
+
+This section replicates the above analysis using broader, theoretically-motivated categories that collapse the 8 granular strategies into 4 higher-level groupings.
+
+## Broader Category Definitions
+
+The table below shows how the original a19f response categories map to our 4 broader categories:
+
+| Broader Category | Original a19f Categories Included |
+|-----------------|----------------------------------|
+| **Network Ties** | Workplace Socializing<br>Friendship Through Connections<br>Religious Community Involvement |
+| **Active Outreach** | Local Venue Visitation<br>Secular Volunteer Service<br>Online Social Networking<br>Athletic Engagement<br>Cultural Hobby Participation<br>Neighborhood Integration<br>Broader Event and Group Participation |
+| **Any Engagement** | Any active friendship-making strategy (inverse of Non-Engagement) |
+| **Non-Engagement** | Non Engagement Preference |
+
+**Important notes:**
+- These broader categories are **not mutually exclusive**. Respondents may use strategies from multiple broader categories, so percentages will sum to more than 100%.
+- The "Other/Unclear" category from the granular analysis is not included in broader categories, as these responses don't clearly map to the theoretical framework.
+- These categories align with social network theory distinguishing between network-leveraging strategies (Network Ties) and proactive outreach strategies (Active Outreach).
+
+## Overall Percentages by Age Group (Broader Categories)
+
+What percentage of respondents use each broader friendship-making strategy?
+
+**Key patterns:** The majority of respondents use some form of active engagement to make friends (78.8% overall). Network-leveraging strategies (utilizing workplace, existing connections, or religious communities) are used by 43.8% of respondents, with much higher rates among young adults (47.2%) than older adults (27.0%). Active outreach strategies (activities, local venues, volunteering, online) are used by about half of respondents overall (51.8%), with similar rates across both age groups (51.5% young, 53.0% old). About one-fifth of respondents (21.2%) express a preference for non-engagement.
+
+```{r friendship-overall-broad}
+# Calculate counts for broader categories
+young_n_broad <- calc_n_broad(young_data)
+old_n_broad <- calc_n_broad(old_data)
+total_n_broad <- calc_n_broad(a19f)
+
+# Build table
+friendship_overall_broad <- data.frame(
+  Strategy = strategies_broad,
+  Young_N = young_n_broad,
+  Young_Pct = sprintf("%.1f%%", 100 * young_n_broad / n_young),
+  Old_N = old_n_broad,
+  Old_Pct = sprintf("%.1f%%", 100 * old_n_broad / n_old),
+  Total_N = total_n_broad,
+  Total_Pct = sprintf("%.1f%%", 100 * total_n_broad / n_total),
+  stringsAsFactors = FALSE
+)
+
+# Add sample size row
+sample_row_broad <- data.frame(
+  Strategy = "N (respondents)",
+  Young_N = n_young,
+  Young_Pct = "",
+  Old_N = n_old,
+  Old_Pct = "",
+  Total_N = n_total,
+  Total_Pct = "",
+  stringsAsFactors = FALSE
+)
+
+friendship_overall_broad <- bind_rows(friendship_overall_broad, sample_row_broad)
+
+styled_table(friendship_overall_broad, "Friendship Strategies by Age Group (Broader Categories)")
+
+export_descriptive_table(friendship_overall_broad, "descriptives_friendship_strategies_overall_broad.csv")
+```
+
+## By Demographic Group (Broader Categories)
+
+Percentages by demographic subgroups using broader strategy categories.
+
+**Key patterns:** Network Ties show the largest age gap (47.2% young vs. 27.0% old), driven primarily by workplace differences. Gender differences are modest for Network Ties (44.6% female vs. 42.3% male), though women use Active Outreach more than men (54.4% vs. 46.4%). Married individuals show higher Network Ties usage (47.3% vs. 41.4%), while unmarried respondents engage slightly more overall (79.7% vs. 77.4%). Latino respondents show notably high Active Outreach rates (59.4%).
+
+```{r friendship-by-demo-broad}
+# Build results table for broader categories
+friendship_demo_broad <- data.frame(Strategy = strategies_broad, stringsAsFactors = FALSE)
+
+for (grp_name in names(demo_groups)) {
+  grp <- demo_groups[[grp_name]]
+  grp_data <- a19f_demo %>% filter(.data[[grp$var]] == grp$val)
+  n_grp <- nrow(grp_data)
+
+  grp_n <- calc_n_broad(grp_data)
+  friendship_demo_broad[[grp_name]] <- sprintf("%.1f%%", 100 * grp_n / n_grp)
+}
+
+# Add Total column
+friendship_demo_broad$Total <- sprintf("%.1f%%", 100 * total_n_broad / n_total)
+
+# Add N row
+n_row_demo_broad <- data.frame(Strategy = "N", stringsAsFactors = FALSE)
+for (grp_name in names(demo_groups)) {
+  grp <- demo_groups[[grp_name]]
+  n_row_demo_broad[[grp_name]] <- as.character(sum(a19f_demo[[grp$var]] == grp$val, na.rm = TRUE))
+}
+n_row_demo_broad$Total <- as.character(n_total)
+
+friendship_demo_broad <- bind_rows(friendship_demo_broad, n_row_demo_broad)
+
+styled_table(friendship_demo_broad, "Friendship Strategies by Demographic Group (Broader Categories)")
+
+export_descriptive_table(friendship_demo_broad, "descriptives_friendship_strategies_demo_broad.csv")
+```
+
+## By Socioeconomic Status (Broader Categories)
+
+Percentages by education, homeownership, and employment status using broader strategy categories.
+
+**Key patterns:** Education shapes Network Ties usage - BA+ holders use network-leveraging strategies more (46.2% vs. 31.1%). Full-time workers show high Network Ties usage (50.8%), reflecting workplace access. Active Outreach rates are similar across education levels (52.0% BA+ vs. 50.0% no BA) but higher among those not working full-time (58.6%). Renters show slightly higher usage of both Network Ties (44.5% vs. 40.6%) and Active Outreach (52.6% vs. 48.1%) compared to homeowners.
+
+```{r friendship-by-ses-broad}
+# Build results table for broader categories
+friendship_ses_broad <- data.frame(Strategy = strategies_broad, stringsAsFactors = FALSE)
+
+for (grp_name in names(ses_groups)) {
+  grp <- ses_groups[[grp_name]]
+  grp_data <- a19f_ses %>% filter(.data[[grp$var]] == grp$val)
+  n_grp <- nrow(grp_data)
+
+  grp_n <- calc_n_broad(grp_data)
+  friendship_ses_broad[[grp_name]] <- sprintf("%.1f%%", 100 * grp_n / n_grp)
+}
+
+# Add Total column
+friendship_ses_broad$Total <- sprintf("%.1f%%", 100 * total_n_broad / n_total)
+
+# Add N row
+n_row_ses_broad <- data.frame(Strategy = "N", stringsAsFactors = FALSE)
+for (grp_name in names(ses_groups)) {
+  grp <- ses_groups[[grp_name]]
+  n_row_ses_broad[[grp_name]] <- as.character(sum(a19f_ses[[grp$var]] == grp$val, na.rm = TRUE))
+}
+n_row_ses_broad$Total <- as.character(n_total)
+
+friendship_ses_broad <- bind_rows(friendship_ses_broad, n_row_ses_broad)
+
+styled_table(friendship_ses_broad, "Friendship Strategies by Socioeconomic Status (Broader Categories)")
+
+export_descriptive_table(friendship_ses_broad, "descriptives_friendship_strategies_ses_broad.csv")
+```
+
+## By Network Size (Broader Categories)
+
+Average network size for those who use vs. don't use each broader strategy category.
+
+This table compares mean network sizes between broader strategy users and non-users. The "sig" columns indicate statistical significance based on t-tests (*** p<.001, ** p<.01, * p<.05).
+
+**Key patterns:** People who use Network Ties strategies have modestly larger non-kin networks (7.57 vs. 6.99) and kin networks (2.86 vs. 2.65), reflecting the network-leveraging nature of these strategies. Active Outreach users also show slightly larger non-kin networks (7.41 vs. 7.06). Any Engagement users have larger networks than those preferring non-engagement for both non-kin and kin ties. These associations suggest that active friendship-making strategies, particularly those leveraging existing networks, are linked to larger social networks.
+
+```{r friendship-by-network-avg-broad}
+# Strategy variable mappings for broader categories
+strategy_vars_broad <- list(
+  "Network Ties" = c("Workplace.Socializing", "Friendship.Through.Connections", "Religious.Community.Involvement"),
+  "Active Outreach" = c("Local.Venue.Visitation", "Secular.Volunteer.Service", "Online.Social.Networking",
+                        "Athletic.Engagement", "Cultural.Hobby.Participation", "Neighborhood.Integration",
+                        "Broader.Event.and.Group.Participation"),
+  "Any Engagement" = "Non.Engagement.Preference",  # Special handling: inverse
+  "Non-Engagement" = "Non.Engagement.Preference"
+)
+
+# Calculate mean network size for broader category users vs non-users with t-tests
+friendship_net_avg_broad <- data.frame(Strategy = character(), stringsAsFactors = FALSE)
+
+for (strat_name in names(strategy_vars_broad)) {
+  vars <- strategy_vars_broad[[strat_name]]
+
+  # Special handling for Any Engagement (inverse of Non-Engagement)
+  if (strat_name == "Any Engagement") {
+    use_idx <- a19f_net$Non.Engagement.Preference == 0
+  } else {
+    use_idx <- uses_strategy(a19f_net, vars)
+  }
+
+  users <- a19f_net[use_idx, ]
+  non_users <- a19f_net[!use_idx, ]
+
+  # T-tests for NonKin and Kin
+  ttest_nonkin <- t.test(users$NonKin, non_users$NonKin)
+  ttest_kin <- t.test(users$TotalKin, non_users$TotalKin)
+
+  friendship_net_avg_broad <- rbind(friendship_net_avg_broad, data.frame(
+    Strategy = strat_name,
+    N_Use = nrow(users),
+    NonKin_Use = sprintf("%.2f", mean(users$NonKin, na.rm = TRUE)),
+    NonKin_NoUse = sprintf("%.2f", mean(non_users$NonKin, na.rm = TRUE)),
+    NonKin_sig = format_p(ttest_nonkin$p.value),
+    Kin_Use = sprintf("%.2f", mean(users$TotalKin, na.rm = TRUE)),
+    Kin_NoUse = sprintf("%.2f", mean(non_users$TotalKin, na.rm = TRUE)),
+    Kin_sig = format_p(ttest_kin$p.value),
+    stringsAsFactors = FALSE
+  ))
+}
+
+styled_table(friendship_net_avg_broad, "Average Network Size by Strategy Use (Broader Categories, t-test: *** p<.001, ** p<.01, * p<.05)")
+
+export_descriptive_table(friendship_net_avg_broad, "descriptives_friendship_strategies_network_avg_broad.csv")
+```
+
+## By Network Size Terciles (Broader Categories)
+
+Percentages using each broader strategy within network size terciles (Low/Medium/High).
+
+**Key patterns:** Network Ties usage increases modestly with network size - from 39.9% in low non-kin tercile to 45.7% in high tercile, showing that network-leveraging strategies are more common among those with larger networks. Active Outreach shows a similar pattern (49.1% to 54.9%). Any Engagement rises across terciles (75.7% to 79.6%), while Non-Engagement decreases correspondingly. These patterns suggest a positive association between active friendship-making strategies and network size, though the relationship is more modest than for specific granular strategies.
+
+```{r friendship-by-network-terciles-broad}
+# Build results table for broader categories using existing terciles
+friendship_net_broad <- data.frame(Strategy = strategies_broad, stringsAsFactors = FALSE)
+
+for (grp_name in names(net_groups)) {
+  grp <- net_groups[[grp_name]]
+  grp_data <- a19f_net %>% filter(.data[[grp$var]] == grp$val)
+  n_grp <- nrow(grp_data)
+
+  grp_n <- calc_n_broad(grp_data)
+  friendship_net_broad[[grp_name]] <- sprintf("%.1f%%", 100 * grp_n / n_grp)
+}
+
+# Add Total column
+friendship_net_broad$Total <- sprintf("%.1f%%", 100 * total_n_broad / n_total)
+
+# Add N row
+n_row_net_broad <- data.frame(Strategy = "N", stringsAsFactors = FALSE)
+for (grp_name in names(net_groups)) {
+  grp <- net_groups[[grp_name]]
+  n_row_net_broad[[grp_name]] <- as.character(sum(a19f_net[[grp$var]] == grp$val, na.rm = TRUE))
+}
+n_row_net_broad$Total <- as.character(n_total)
+
+friendship_net_broad <- bind_rows(friendship_net_broad, n_row_net_broad)
+
+styled_table(friendship_net_broad, "Friendship Strategies by Network Size Terciles (Broader Categories)")
+
+export_descriptive_table(friendship_net_broad, "descriptives_friendship_strategies_network_terciles_broad.csv")
+```
+
+## Summary: Broader vs. Granular Categories
+
+The broader category analysis reveals clear patterns that align with social network theory. Network-leveraging strategies (Network Ties) are strongly associated with education, employment, and age - resources that provide access to institutional networks. These strategies are also significantly linked to larger network sizes. Active Outreach strategies are more universally accessible across demographic groups and show positive associations with network size, though effects are more modest. The strong correlation between Any Engagement and network size (both kin and non-kin) underscores the importance of active friendship-making efforts for network development. Together, these patterns suggest that friendship-making strategies operate through two main pathways: leveraging existing institutional positions (Network Ties) and proactive community engagement (Active Outreach), with the former showing stronger stratification by socioeconomic status.

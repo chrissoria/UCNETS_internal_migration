@@ -1,0 +1,21 @@
+---
+title: "all_results"
+format: html
+editor: visual
+---
+
+## Descriptives
+
+### How many people move?
+
+### Who moves within Bay?
+
+### Who moves out of Bay?
+
+## Open-Ended Reasons for Moving
+
+## Open-Ended Ways to Make New Friends After Moving
+
+## Mixed Effects: Within Bay Moves
+
+## Mixed Effects: Out of Bay Moves

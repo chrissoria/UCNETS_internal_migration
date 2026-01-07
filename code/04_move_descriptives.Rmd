@@ -1,0 +1,571 @@
+---
+title: "Move Descriptives"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+options(width = 200)  # Increase console width for wide tables
+```
+
+```{r load-kable, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Helper function for styled tables
+styled_table <- function(df, caption = NULL) {
+  kable(df, row.names = FALSE, caption = caption) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+```
+
+# Overview
+
+This notebook generates descriptive statistics tables for move-related outcomes:
+
+1. **Table 1: Move Rates** - How many people move? (by age group)
+2. **Table 2: Who Moves Within Bay?** - Demographics of within-Bay movers vs stayers
+3. **Table 3: Who Moves Out of Bay?** - Demographics of out-of-Bay movers vs stayers
+4. **Sample Characteristics** - Overall demographics by age group
+5. **Network Variables** - Means/SDs for kin/nonkin counts by distance
+6. **Life Events** - Frequencies of new job, school, financial problems, etc.
+7. **Attrition** - Observations per wave and participation patterns
+8. **Correlations** - Correlation matrix among key predictors
+
+See `05_friendship_strategy_descriptives.Rmd` for friendship-making strategies analysis.
+
+## Key Takeaways
+
+- **Life stage is the primary driver of mobility**: Young adults move at dramatically higher rates than older adults, reflecting the fluidity of early adulthood versus the residential stability that comes with age.
+- **Intentions don't equal action**: Many people plan to move but don't follow through, and this gap is larger for older adults—suggesting that stability increases with age even among those considering relocation.
+- **Out-migration is selective by education**: Those with higher education are overrepresented among people who leave the Bay Area, pointing to the role of human capital in enabling long-distance moves.
+- **Network composition reflects life stage**: Young adults have more non-kin ties (especially in the household), while older adults have denser local kin networks—different network structures may anchor people differently.
+- **Life transitions concentrate in young adulthood**: Job changes, school enrollment, and financial disruptions cluster among young adults, creating more opportunities (or pressures) for residential mobility.
+
+## Load Libraries and Helpers
+
+```{r libraries}
+library(here)
+library(dplyr)
+
+# Source helper functions
+source(here("code", "helpers", "descriptive_helpers.R"))
+```
+
+## Load Data
+
+```{r load-data, include=FALSE}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+# Create female indicator (gender: 1=Male, 2=Female)
+df$female <- ifelse(df$gender == 2, 1, 0)
+
+# Create BA_or_greater indicator (inverse of LT_BA)
+df$BA_or_greater <- ifelse(df$LT_BA == 1, 0, 1)
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df),
+            n_distinct(df$prim_key)))
+
+cat(sprintf("\nObservations by age group:\n"))
+cat(sprintf("  Young (agegroup=0): %d\n", sum(df$agegroup == 0)))
+cat(sprintf("  Old (agegroup=1): %d\n", sum(df$agegroup == 1)))
+```
+
+# How Many People Move?
+
+Young adults (21-30) were more mobile: 39.8% moved within the Bay Area and 20.2% left the region. Older adults (50-70) moved less, with 6.7% moving within the Bay and 3.9% leaving. Stated intentions exceeded actual moves in both groups: 52.8% of young adults and 14.8% of older adults reported planning to move. Of those who planned to move, 77.0% of young adults actually moved compared to only 45.0% of older adults.
+
+## Observation-Level
+
+Move rates by age group (Young vs Old). Each wave counted separately.
+
+```{r table1a-move-rates-obs}
+outcomes <- c("Moved_in_Bay_w23", "Moved_out_of_Bay_w23", "Plan_to_Move")
+outcome_labels <- c("Moved Within Bay", "Moved Out of Bay", "Plan to Move")
+
+move_rates_obs <- create_move_rates_table(df, outcomes, outcome_labels)
+
+styled_table(move_rates_obs, "Move Rates by Age Group (Observation-Level)")
+
+export_descriptive_table(move_rates_obs, "descriptives_move_rates_obs.csv")
+```
+
+## Respondent-Level
+
+Move rates by age group (Young vs Old). Each person counted once (ever moved during study).
+
+```{r table1b-move-rates-person}
+move_rates_person <- create_move_rates_table_person(df, outcomes, outcome_labels)
+
+styled_table(move_rates_person, "Move Rates by Age Group (Respondent-Level)")
+
+export_descriptive_table(move_rates_person, "descriptives_move_rates_person.csv")
+```
+
+## Plan to Move Conversion
+
+Of those who planned to move, what proportion actually moved? Uses `Moved_w23` (any move).
+
+```{r table1c-plan-conversion}
+plan_conversion <- create_plan_to_move_conversion(df, move_var = "Moved_w23")
+
+styled_table(plan_conversion, "Plan to Move Conversion Rates")
+
+export_descriptive_table(plan_conversion, "descriptives_plan_conversion.csv")
+```
+
+# Who Moves Within Bay?
+
+Young within-Bay movers were more likely to be employed full-time (67.2% vs 50.7%), married (51.1% vs 33.1%), and have a BA or greater (88.5% vs 84.8%). Homeownership was similar (17.9% vs 18.4%). Older within-Bay movers were less likely to be homeowners (39.6% vs 67.7%), less likely to be married (37.7% vs 48.8%), and less likely to have a BA or greater (60.4% vs 73.6%). Black older adults were overrepresented among movers (24.5% vs 8.2%), while Asian respondents were underrepresented in both age groups. Young movers were slightly older (27.5 vs 26.7 years), while older movers were slightly younger (61.1 vs 62.3 years). Gender differences were minimal.
+
+## Observation-Level
+
+Demographics comparison of within-Bay movers vs non-movers, by age group.
+Each wave counted separately.
+
+```{r table2a-within-bay-obs}
+# Define demographic variables
+demo_vars <- list(
+  "Black" = "black_race",
+  "Asian" = "asian_race",
+  "Latino" = "latino_eth",
+  "Other Race" = "other_race",
+  "Female" = "female",
+  "Age (mean, SD)" = "age",
+  "BA or Greater" = "BA_or_greater",
+  "Homeowner" = "Owns_home",
+  "Full-time Employed" = "Full_Time",
+  "Married/Cohabiting" = "Marr_Cohab"
+)
+
+within_bay_table_obs <- create_who_moves_table(
+  df,
+  move_var = "Moved_in_Bay_w23",
+  demo_vars = demo_vars,
+  continuous_vars = c("age")
+)
+
+styled_table(within_bay_table_obs, "Who Moves Within Bay? (Observation-Level)")
+
+export_descriptive_table(within_bay_table_obs, "descriptives_within_bay_movers_obs.csv")
+```
+
+## Respondent-Level
+
+Demographics comparison of within-Bay movers vs non-movers, by age group.
+Each person counted once (ever moved within Bay during study).
+
+```{r table2b-within-bay-person}
+within_bay_table_person <- create_who_moves_table_person(
+  df,
+  move_var = "Moved_in_Bay_w23",
+  demo_vars = demo_vars,
+  continuous_vars = c("age")
+)
+
+styled_table(within_bay_table_person, "Who Moves Within Bay? (Respondent-Level)")
+
+export_descriptive_table(within_bay_table_person, "descriptives_within_bay_movers_person.csv")
+```
+
+# Who Moves Out of Bay?
+
+Out-of-Bay movers were more likely to have a BA or greater in both age groups (86.0% vs 72.2% for young; 76.7% vs 64.3% for old). Young movers were less likely to be married (39.5% vs 35.7%) and less likely to own homes (14.0% vs 18.6%). Older movers were more likely to be married (60.0% vs 48.3%) with similar homeownership rates (63.3% vs 67.0%). Among older adults, Asian respondents were underrepresented among movers (3.3% vs 9.9%) and Latino respondents were overrepresented (10.0% vs 5.9%). Gender and employment showed minimal differences in both age groups.
+
+## Observation-Level
+
+Demographics comparison of out-of-Bay movers vs non-movers, by age group.
+Each wave counted separately.
+
+```{r table3a-out-of-bay-obs}
+out_of_bay_table_obs <- create_who_moves_table(
+  df,
+  move_var = "Moved_out_of_Bay_w23",
+  demo_vars = demo_vars,
+  continuous_vars = c("age")
+)
+
+styled_table(out_of_bay_table_obs, "Who Moves Out of Bay? (Observation-Level)")
+
+export_descriptive_table(out_of_bay_table_obs, "descriptives_out_of_bay_movers_obs.csv")
+```
+
+## Respondent-Level
+
+Demographics comparison of out-of-Bay movers vs non-movers, by age group.
+Each person counted once (ever moved out of Bay during study).
+
+```{r table3b-out-of-bay-person}
+out_of_bay_table_person <- create_who_moves_table_person(
+  df,
+  move_var = "Moved_out_of_Bay_w23",
+  demo_vars = demo_vars,
+  continuous_vars = c("age")
+)
+
+styled_table(out_of_bay_table_person, "Who Moves Out of Bay? (Respondent-Level)")
+
+export_descriptive_table(out_of_bay_table_person, "descriptives_out_of_bay_movers_person.csv")
+```
+
+# Sample Characteristics
+
+Overall sample demographics by age group.
+
+## Sample Characteristics: Observation-Level
+
+```{r sample-characteristics-obs}
+sample_chars_obs <- create_sample_characteristics(
+  df,
+  vars = demo_vars,
+  continuous_vars = c("age")
+)
+
+styled_table(sample_chars_obs, "Sample Characteristics (Observation-Level)")
+
+export_descriptive_table(sample_chars_obs, "descriptives_sample_characteristics_obs.csv")
+```
+
+## Sample Characteristics: Respondent-Level
+
+```{r sample-characteristics-person}
+sample_chars_person <- create_sample_characteristics_person(
+  df,
+  vars = demo_vars,
+  continuous_vars = c("age")
+)
+
+styled_table(sample_chars_person, "Sample Characteristics (Respondent-Level)")
+
+export_descriptive_table(sample_chars_person, "descriptives_sample_characteristics_person.csv")
+```
+
+# Network Variables
+
+Means and standard deviations for kin and non-kin network counts by geographic distance.
+
+## By Distance
+
+Older adults have more kin nearby (0.93 vs 0.67 in household; 1.57 vs 0.91 within 60 min) but fewer kin far away (1.18 vs 1.43 > 1 hour). Young adults have far more non-kin in the household (1.08 vs 0.15), likely reflecting roommate arrangements. Married/cohabiting respondents have more kin in the household (1.15 vs 0.52) and within 60 minutes (1.49 vs 1.12), but fewer non-kin in the household (0.44 vs 0.62) and far away (1.24 vs 1.65). Women report more non-kin ties across all distance categories compared to men.
+
+```{r network-variables}
+network_vars <- list(
+  # Kin networks
+  "Kin in Household" = "Kin_in_HH_N",
+  "Kin within 5 min" = "Kin_in_5_N",
+  "Kin within 60 min" = "Kin_within_60_N",
+  "Kin > 1 hour" = "Kin_GT_Hour_N",
+  # Non-kin networks
+  "Non-kin in Household" = "Nonkin_in_HH_N",
+  "Non-kin within 5 min" = "Nonkin_in_5_N",
+  "Non-kin within 60 min" = "Nonkin_within_60_N",
+  "Non-kin > 1 hour" = "Nonkin_GT_Hour_N"
+)
+
+# By age, gender, and marital status
+network_groups_demo <- list(
+  "Age" = list(
+    var = "agegroup",
+    levels = list("0" = "Young", "1" = "Old")
+  ),
+  "Gender" = list(
+    var = "female",
+    levels = list("0" = "Male", "1" = "Female")
+  ),
+  "Marital" = list(
+    var = "Marr_Cohab",
+    levels = list("0" = "Not Married", "1" = "Married/Cohab")
+  )
+)
+
+network_summary_demo <- create_network_summary(df, network_vars, network_groups_demo)
+
+styled_table(network_summary_demo, "Network Variables by Age, Gender, and Marital Status")
+
+export_descriptive_table(network_summary_demo, "descriptives_network_variables_demo.csv")
+```
+
+## By Distance and Race/Ethnicity
+
+Black respondents have more kin within 60 minutes (1.97 vs 1.30 total sample) and within 5 minutes (0.53 vs 0.34), but fewer non-kin in household (0.25 vs 0.53) and within 60 minutes (4.04 vs 5.14). Asian respondents have fewer kin within 5 minutes (0.27) but more non-kin in the household (0.64) and within 60 minutes (5.22). Latino respondents have the most kin far away (1.48 vs 1.29) and more non-kin in the household (0.83).
+
+```{r network-variables-race}
+# By race/ethnicity
+network_groups_race <- list(
+  "Race1" = list(
+    var = "black_race",
+    levels = list("1" = "Black")
+  ),
+  "Race2" = list(
+    var = "asian_race",
+    levels = list("1" = "Asian")
+  ),
+  "Race3" = list(
+    var = "latino_eth",
+    levels = list("1" = "Latino")
+  )
+)
+
+network_summary_race <- create_network_summary(df, network_vars, network_groups_race)
+
+styled_table(network_summary_race, "Network Variables by Race/Ethnicity")
+
+export_descriptive_table(network_summary_race, "descriptives_network_variables_race.csv")
+```
+
+## By Network Type
+
+Network size by immediate kin, extended kin, and non-kin across demographic groups.
+
+Immediate kin network size is similar across age groups (2.13 vs 2.11), but older adults have more extended kin (1.10 vs 0.63) while young adults have more non-kin (7.32 vs 6.47). Women report larger networks than men across all categories, particularly non-kin (7.15 vs 6.16). Married/cohabiting respondents have more extended kin (1.07 vs 0.75) but fewer non-kin (6.43 vs 7.18). Black and Latino respondents have more immediate kin (2.41 each vs 2.12 total) and extended kin (1.24 and 1.12 vs 0.91), while Black respondents have the smallest non-kin networks (5.33 vs 6.82).
+
+```{r network-simple}
+# Network type variables as columns
+network_types <- c(
+  "Immediate Kin" = "ImmedKin",
+  "Extended Kin" = "ExtKin",
+  "Non-Kin" = "NonKin"
+)
+
+# Define all groups as rows
+all_groups <- list(
+  list(label = "Young", var = "agegroup", value = "0"),
+  list(label = "Old", var = "agegroup", value = "1"),
+  list(label = "Male", var = "female", value = "0"),
+  list(label = "Female", var = "female", value = "1"),
+  list(label = "Not Married", var = "Marr_Cohab", value = "0"),
+  list(label = "Married/Cohab", var = "Marr_Cohab", value = "1"),
+  list(label = "Black", var = "black_race", value = "1"),
+  list(label = "Asian", var = "asian_race", value = "1"),
+  list(label = "Latino", var = "latino_eth", value = "1"),
+  list(label = "Total", var = NULL, value = NULL)
+)
+
+network_simple <- create_network_table_simple(df, network_types, all_groups)
+
+styled_table(network_simple, "Network Size by Group")
+
+export_descriptive_table(network_simple, "descriptives_network_simple.csv")
+```
+
+# Life Events
+
+Frequencies of life events by age group.
+
+## By Age Group
+
+Young adults are far more likely to experience job changes (36.7% vs 5.6%), school enrollment (10.8% vs 0.7%), and having someone close move away (31.6% vs 4.3%). Older adults report more births (9.5% vs 2.7%), likely reflecting grandchildren rather than their own children. Financial problems are more common among young adults (18.6% vs 11.4%).
+
+```{r life-events}
+event_vars <- list(
+  "New Job" = "LE_NewJob",
+  "New School/Training" = "LE_NewSchool",
+  "Financial Problems" = "LE_FinanProb",
+  "Someone Close Moved Away" = "LE_MovedTown",
+  "Birth of Child" = "LEX_Birth"
+)
+
+life_events <- create_life_events_table(df, event_vars)
+
+styled_table(life_events, "Life Events by Age Group")
+
+export_descriptive_table(life_events, "descriptives_life_events.csv")
+```
+
+## By Demographic Group
+
+Life event prevalence across demographic groups.
+
+Women report slightly higher rates of financial problems (16.0% vs 11.5%) and job changes (20.1% vs 15.8%). Unmarried respondents have more financial problems (19.9% vs 11.7%) and school enrollment (7.7% vs 3.0%), while married respondents report more births (10.0% vs 5.0%). Black respondents report the highest financial problems (26.3% vs 14.4% total), while Asian respondents have the lowest (9.5%). Latino respondents also report elevated financial problems (23.2%).
+
+```{r life-events-simple}
+# Life event variables as columns
+event_types <- c(
+  "New Job" = "LE_NewJob",
+  "New School" = "LE_NewSchool",
+  "Financial Prob" = "LE_FinanProb",
+  "Close Moved" = "LE_MovedTown",
+  "Birth" = "LEX_Birth"
+)
+
+# Define all groups as rows (reuse from network table)
+all_groups <- list(
+  list(label = "Young", var = "agegroup", value = "0"),
+  list(label = "Old", var = "agegroup", value = "1"),
+  list(label = "Male", var = "female", value = "0"),
+  list(label = "Female", var = "female", value = "1"),
+  list(label = "Not Married", var = "Marr_Cohab", value = "0"),
+  list(label = "Married/Cohab", var = "Marr_Cohab", value = "1"),
+  list(label = "Black", var = "black_race", value = "1"),
+  list(label = "Asian", var = "asian_race", value = "1"),
+  list(label = "Latino", var = "latino_eth", value = "1"),
+  list(label = "Total", var = NULL, value = NULL)
+)
+
+life_events_simple <- create_life_events_table_simple(df, event_types, all_groups)
+
+styled_table(life_events_simple, "Life Events by Group")
+
+cat("Note: 'Close Moved' refers to someone close to the respondent moving away from town.")
+
+export_descriptive_table(life_events_simple, "descriptives_life_events_simple.csv")
+```
+
+# Attrition and Missing Data
+
+Observations per wave and participation patterns.
+
+## Observations per Wave
+
+```{r attrition-waves}
+# Filter to completed cases only (completed_case == 1)
+df_completed <- df %>% filter(completed_case == 1)
+
+attrition <- create_attrition_table(df_completed)
+
+styled_table(attrition$wave_counts, "Observations per Wave by Age Group")
+
+export_descriptive_table(attrition$wave_counts, "descriptives_wave_counts.csv")
+```
+
+## Usable Cases by Model Type
+
+```{r usable-cases}
+usable_cases <- create_usable_cases_table(df_completed)
+
+styled_table(usable_cases, "Usable Cases by Model Type")
+
+export_descriptive_table(usable_cases, "descriptives_usable_cases.csv")
+```
+
+# Correlation Matrix
+
+Correlations among key predictors.
+
+No correlations are high enough to raise multicollinearity concerns. The strongest correlations are between age and homeownership (0.51), age and non-kin in household (-0.44), and age and full-time employment (-0.35). Homeownership is positively associated with kin in household (0.33) and negatively with non-kin in household (-0.35). Marriage is correlated with kin in household (0.27) and homeownership (0.23). Network variables at different distances show modest negative correlations, suggesting some trade-off between local and distant ties.
+
+```{r correlations, fig.width=10, fig.height=8}
+library(ggplot2)
+library(reshape2)
+
+# Select key variables for correlation matrix
+cor_vars <- c(
+  "Kin_within_60_N", "Nonkin_within_60_N",
+  "Kin_in_HH_N", "Nonkin_in_HH_N",
+  "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Owns_home", "Full_Time", "Marr_Cohab", "age"
+)
+
+cor_labels <- c(
+  "Kin_within_60_N" = "Kin <60min",
+  "Nonkin_within_60_N" = "Nonkin <60min",
+  "Kin_in_HH_N" = "Kin in HH",
+  "Nonkin_in_HH_N" = "Nonkin in HH",
+  "Kin_GT_Hour_N" = "Kin >1hr",
+  "Nonkin_GT_Hour_N" = "Nonkin >1hr",
+  "Owns_home" = "Homeowner",
+  "Full_Time" = "Full-time",
+  "Marr_Cohab" = "Married",
+  "age" = "Age"
+)
+
+# Calculate correlation matrix
+cor_data <- df %>% select(all_of(cor_vars))
+cor_mat <- cor(cor_data, use = "pairwise.complete.obs")
+
+# Apply labels
+rownames(cor_mat) <- cor_labels[rownames(cor_mat)]
+colnames(cor_mat) <- cor_labels[colnames(cor_mat)]
+
+# Melt for ggplot
+cor_melted <- melt(cor_mat)
+
+# Create heatmap
+ggplot(cor_melted, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", value)), size = 3) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
+                       midpoint = 0, limits = c(-1, 1),
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  ) +
+  coord_fixed() +
+  labs(title = "Correlation Matrix of Key Predictors")
+
+# Also export as CSV
+cor_matrix <- create_correlation_matrix(df, cor_vars, cor_labels)
+export_descriptive_table(cor_matrix, "descriptives_correlations.csv")
+```
+
+## By Network Type
+
+This matrix includes racial categories to examine how they correlate with network size and demographic variables (correlations among demographic variables themselves are less meaningful). Black respondents have more immediate (0.05) and extended kin (0.06) but fewer non-kin (-0.10), and are less likely to be married (-0.14) or homeowners (-0.10). Asian respondents are younger (-0.26) and more likely to work full-time (0.11). Latino respondents are also younger (-0.17) and less likely to be homeowners (-0.11). Extended kin is negatively correlated with non-kin (-0.17), suggesting a trade-off between kin and non-kin network investment.
+
+```{r correlations-network-type, fig.width=10, fig.height=8}
+# Simplified network variables
+cor_vars_simple <- c(
+  "ImmedKin", "ExtKin", "NonKin",
+  "Owns_home", "Full_Time", "Marr_Cohab", "age",
+  "black_race", "asian_race", "latino_eth"
+)
+
+cor_labels_simple <- c(
+  "ImmedKin" = "Immediate Kin",
+  "ExtKin" = "Extended Kin",
+  "NonKin" = "Non-Kin",
+  "Owns_home" = "Homeowner",
+  "Full_Time" = "Full-time",
+  "Marr_Cohab" = "Married",
+  "age" = "Age",
+  "black_race" = "Black",
+  "asian_race" = "Asian",
+  "latino_eth" = "Latino"
+)
+
+# Calculate correlation matrix
+cor_data_simple <- df %>% select(all_of(cor_vars_simple))
+cor_mat_simple <- cor(cor_data_simple, use = "pairwise.complete.obs")
+
+# Apply labels
+rownames(cor_mat_simple) <- cor_labels_simple[rownames(cor_mat_simple)]
+colnames(cor_mat_simple) <- cor_labels_simple[colnames(cor_mat_simple)]
+
+# Melt for ggplot
+cor_melted_simple <- melt(cor_mat_simple)
+
+# Create heatmap
+ggplot(cor_melted_simple, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", value)), size = 3.5) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
+                       midpoint = 0, limits = c(-1, 1),
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  ) +
+  coord_fixed() +
+  labs(title = "Correlation Matrix by Network Type")
+
+# Export as CSV
+cor_matrix_simple <- create_correlation_matrix(df, cor_vars_simple, cor_labels_simple)
+export_descriptive_table(cor_matrix_simple, "descriptives_correlations_network_type.csv")
+```

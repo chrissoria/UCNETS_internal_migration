@@ -1,0 +1,929 @@
+---
+title: "Plan to Move vs. Actually Moving: The Action Gap"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = TRUE, warning = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+options(width = 200)  # Increase console width for wide tables
+```
+
+```{r load-kable, include=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Helper function for styled tables
+styled_table <- function(df, caption = NULL) {
+  kable(df, row.names = FALSE, caption = caption) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+}
+```
+
+# Overview
+
+This notebook examines the disconnect between **planning to move** and **actually moving**:
+
+**Context:**
+- **Overall Move Rates** - Baseline: How many people moved (regardless of planning)?
+
+**Main Analysis:**
+1. **Conversion Rates** - What proportion of planners actually move?
+2. **Who Plans to Move?** - Demographics and SES of planners vs. non-planners
+3. **Who Follows Through?** - Demographics of planners who move vs. don't move
+4. **Stuck Planners** - Who plans to move but doesn't? What constrains them?
+5. **Network Predictors of Follow-Through** - Do social ties predict action?
+6. **Life Events & Follow-Through** - Are certain events associated with actualizing plans?
+7. **Unplanned Movers** - Who moves without having planned to?
+8. **All Plan-Action Combinations** - Four-way comparison of all intention-action groups
+
+## Load Libraries and Helpers
+
+```{r libraries}
+library(here)
+library(dplyr)
+library(tidyr)
+
+# Source helper functions
+source(here("code", "helpers", "descriptive_helpers.R"))
+source(here("code", "helpers", "plan_action_helpers.R"))
+```
+
+## Load Data
+
+```{r load-data, include=FALSE}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+# Create female indicator (gender: 1=Male, 2=Female)
+df$female <- ifelse(df$gender == 2, 1, 0)
+
+# Create BA_or_greater indicator (inverse of LT_BA)
+df$BA_or_greater <- ifelse(df$LT_BA == 1, 0, 1)
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df),
+            n_distinct(df$prim_key)))
+
+cat(sprintf("\nObservations by age group:\n"))
+cat(sprintf("  Young (agegroup=0): %d\n", sum(df$agegroup == 0)))
+cat(sprintf("  Old (agegroup=1): %d\n", sum(df$agegroup == 1)))
+```
+
+# Context: Overall Move Rates
+
+Before examining the plan-action gap, let's review how many people moved overall (regardless of whether they planned to).
+
+## Respondent-Level Move Rates
+
+```{r overall-move-rates}
+outcomes <- c("Moved_in_Bay_w23", "Moved_out_of_Bay_w23", "Moved_w23", "Plan_to_Move")
+outcome_labels <- c("Moved Within Bay", "Moved Out of Bay", "Moved (Any)", "Planned to Move")
+
+overall_rates <- create_move_rates_table_person(df, outcomes, outcome_labels)
+
+styled_table(overall_rates, "Overall Move Rates (Respondent-Level)")
+
+export_descriptive_table(overall_rates, "plan_action_overall_rates.csv")
+```
+
+# The Action Gap
+
+There is a substantial gap between intention and action. Using timing-aware analysis (only counting those who planned before or in the same wave as they moved), young adults show higher conversion rates (72.2% actually moved) compared to older adults (40.2% actually moved). This suggests that mobility intentions are more predictive of actual moves among younger respondents, while older adults face greater barriers or constraints that prevent them from actualizing their plans.
+
+Importantly, some people (52 total) moved BEFORE they ever reported planning to move, suggesting they may be planning subsequent moves or that some moves are truly reactive rather than planned.
+
+# 1. Basic Conversion Rates
+
+Of those who planned to move, what proportion actually moved?
+
+**Important:** These conversion rates are **timing-aware**. We only count people who planned to move BEFORE or in the SAME wave as they actually moved. People who moved first and then later reported planning to move are excluded from the conversion calculation (they may be planning a subsequent move).
+
+Overall, about two-thirds (62.5%) of those who planned to move actually did so. There is a substantial age gap in follow-through: young adults converted plans to action at 72.2% compared to only 40.2% for older adults—nearly double the rate.
+
+```{r conversion-rates}
+conversion_any <- create_plan_to_move_conversion(df, move_var = "Moved_w23")
+styled_table(conversion_any, "Plan-to-Move Conversion: Any Move (Timing-Aware)")
+export_descriptive_table(conversion_any, "plan_action_conversion_any.csv")
+```
+
+## Where Did Planners Move?
+
+Of the 304 people who planned to move, 47.2% of young adults moved within the Bay Area, 30.7% moved out of the Bay, and 27.8% did not move at all. Among older adults, 22.8% moved within the Bay, 14.1% moved out, and 59.8% did not move. Note that the three percentages can sum to more than 100% because some people made multiple moves during the study period (e.g., first within Bay, then out of Bay).
+
+```{r planner-destinations}
+planner_dest_simple <- create_planner_destinations_simple(df)
+
+styled_table(planner_dest_simple, "Where Planners Moved (% of All Planners)")
+
+# Export full version for reference
+planner_dest_full <- create_planner_destinations(df)
+export_descriptive_table(planner_dest_full, "plan_action_planner_destinations.csv")
+```
+
+## Alternative View: Planning Status Among All Movers
+
+The above conversion rates show: **Of those who planned, how many moved?**
+
+This table shows the inverse: **Of those who moved, how many had planned to do so?**
+
+```{r mover-planning-status}
+mover_planning <- create_mover_planning_status(df, move_var = "Moved_w23")
+
+styled_table(mover_planning, "Planning Status Among All Movers")
+
+export_descriptive_table(mover_planning, "plan_action_mover_planning_status.csv")
+```
+
+This shows that of the **418 total movers**, only **190 (45.5%)** had planned to move beforehand. The majority (**228 or 54.5%**) did not plan the move in advance, suggesting many moves are reactive, opportunistic, or driven by external circumstances rather than deliberate planning.
+
+# 2. Who Plans to Move?
+
+Planners are generally younger than non-planners (mean age 35.8 vs. 52.5 years overall). Across all demographic and SES groups, young adults are substantially more likely to plan moves than older adults. For example, 55.6% of Black young adults planned to move compared to only 20.7% of Black older adults, and 51.4% of Asian young adults planned versus 15.2% of Asian older adults. Young homeowners show particularly high planning rates (59.6%), likely reflecting their position in "starter homes" with intentions to upgrade or relocate. At the opposite extreme, older homeowners represent the group least likely to plan moves: only 10.8% planned to move, suggesting strong residential stability and aging in place. Similarly, only 13.5% of older adults with a BA or greater planned to move, compared to 54.3% of their younger counterparts.
+
+```{r who-plans-demo}
+demo_vars <- list(
+  "Black" = "black_race",
+  "Asian" = "asian_race",
+  "Latino" = "latino_eth",
+  "Other Race" = "other_race",
+  "Female" = "female",
+  "Age (mean, SD)" = "age",
+  "BA or Greater" = "BA_or_greater",
+  "Homeowner" = "Owns_home",
+  "Full-time Employed" = "Full_Time",
+  "Married/Cohabiting" = "Marr_Cohab"
+)
+
+planning_rates <- create_planning_rates_by_group(df, demo_vars, continuous_vars = c("age"))
+
+# Add N row
+person_df <- df %>%
+  group_by(prim_key) %>%
+  summarise(
+    agegroup = first(agegroup),
+    ever_planned = as.integer(any(Plan_to_Move == 1, na.rm = TRUE)),
+    black_race = max(black_race, na.rm = TRUE),
+    asian_race = max(asian_race, na.rm = TRUE),
+    latino_eth = max(latino_eth, na.rm = TRUE),
+    other_race = max(other_race, na.rm = TRUE),
+    female = max(female, na.rm = TRUE),
+    BA_or_greater = max(BA_or_greater, na.rm = TRUE),
+    Owns_home = max(Owns_home, na.rm = TRUE),
+    Full_Time = max(Full_Time, na.rm = TRUE),
+    Marr_Cohab = max(Marr_Cohab, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+n_row <- data.frame(
+  Variable = "N (respondents)",
+  Young_Planned = as.character(sum(person_df$agegroup == 0 & person_df$ever_planned == 1, na.rm = TRUE)),
+  Young_NeverPlanned = as.character(sum(person_df$agegroup == 0 & person_df$ever_planned == 0, na.rm = TRUE)),
+  Old_Planned = as.character(sum(person_df$agegroup == 1 & person_df$ever_planned == 1, na.rm = TRUE)),
+  Old_NeverPlanned = as.character(sum(person_df$agegroup == 1 & person_df$ever_planned == 0, na.rm = TRUE)),
+  Total_Planned = as.character(sum(person_df$ever_planned == 1, na.rm = TRUE)),
+  Total_NeverPlanned = as.character(sum(person_df$ever_planned == 0, na.rm = TRUE)),
+  stringsAsFactors = FALSE
+)
+
+planning_rates <- bind_rows(planning_rates, n_row)
+
+styled_table(planning_rates, "Planning Rates by Demographic Group")
+
+export_descriptive_table(planning_rates, "plan_action_planning_rates_demo.csv")
+```
+
+## Planning Rates by Group
+
+```{r planning-rates-plot, fig.width=10, fig.height=6}
+library(ggplot2)
+library(tidyr)
+
+# Create data for plotting (exclude Age row and Other Race)
+plot_data <- planning_rates %>%
+  filter(Variable != "Age (mean, SD)", Variable != "Other Race") %>%
+  select(Variable, Young_Planned, Old_Planned) %>%
+  mutate(
+    Young_Pct = as.numeric(gsub("%", "", Young_Planned)),
+    Old_Pct = as.numeric(gsub("%", "", Old_Planned))
+  ) %>%
+  select(Variable, Young_Pct, Old_Pct) %>%
+  pivot_longer(cols = c(Young_Pct, Old_Pct),
+               names_to = "Age_Group",
+               values_to = "Percent_Planned") %>%
+  mutate(
+    Age_Group = ifelse(Age_Group == "Young_Pct", "Young", "Old"),
+    Variable = factor(Variable, levels = c("Black", "Asian", "Latino",
+                                            "Female", "BA or Greater", "Homeowner",
+                                            "Full-time Employed", "Married/Cohabiting"))
+  )
+
+# Create bar plot
+ggplot(plot_data, aes(x = Variable, y = Percent_Planned, fill = Age_Group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(values = c("Young" = "#2166AC", "Old" = "#B2182B"),
+                    name = "Age Group") +
+  labs(
+    title = "Planning Rates by Demographic Group and Age",
+    x = "",
+    y = "Percent Who Planned to Move"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.y = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 11),
+    panel.grid.major.x = element_blank()
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 70))
+```
+
+# 3. Who Follows Through?
+
+The table below shows conversion rates by demographic group (e.g., "Of Black young planners, what % actually moved?"). This allows us to compare which demographic groups have the highest follow-through rates.
+
+Among young adults, Black respondents have the lowest follow-through on their plans to move, while Latino respondents have the highest conversion rates. Among older adults, the pattern differs: older Black respondents have the highest follow-through rates, while older Latino respondents show lower conversion. These contrasting patterns between age groups may reflect differences in resource access or residential stability between younger and older Black adults in the Bay Area.
+
+```{r who-follows-through}
+demo_vars <- list(
+  "Black" = "black_race",
+  "Asian" = "asian_race",
+  "Latino" = "latino_eth",
+  "Other Race" = "other_race",
+  "Female" = "female",
+  "Age (mean, SD)" = "age",
+  "BA or Greater" = "BA_or_greater",
+  "Homeowner" = "Owns_home",
+  "Full-time Employed" = "Full_Time",
+  "Married/Cohabiting" = "Marr_Cohab"
+)
+
+conversion_by_group <- create_conversion_rates_by_group(df, demo_vars, continuous_vars = c("age"))
+
+# Add N row
+planner_df <- df %>%
+  group_by(prim_key) %>%
+  summarise(
+    agegroup = first(agegroup),
+    ever_planned = as.integer(any(Plan_to_Move == 1, na.rm = TRUE)),
+    ever_moved = as.integer(any(Moved_w23 == 1, na.rm = TRUE)),
+    first_plan_wave = ifelse(any(Plan_to_Move == 1), min(WAVE[Plan_to_Move == 1]), NA),
+    first_move_wave = ifelse(any(Moved_w23 == 1), min(WAVE[Moved_w23 == 1]), NA),
+    .groups = "drop"
+  ) %>%
+  filter(ever_planned == 1) %>%
+  mutate(
+    converted = ifelse(ever_moved == 1 & !is.na(first_move_wave) & first_move_wave >= first_plan_wave, 1, 0)
+  )
+
+n_young_moved <- sum(planner_df$agegroup == 0 & planner_df$converted == 1, na.rm = TRUE)
+n_young_stuck <- sum(planner_df$agegroup == 0 & planner_df$converted == 0, na.rm = TRUE)
+n_old_moved <- sum(planner_df$agegroup == 1 & planner_df$converted == 1, na.rm = TRUE)
+n_old_stuck <- sum(planner_df$agegroup == 1 & planner_df$converted == 0, na.rm = TRUE)
+n_total_moved <- sum(planner_df$converted == 1, na.rm = TRUE)
+n_total_stuck <- sum(planner_df$converted == 0, na.rm = TRUE)
+
+n_row <- data.frame(
+  Variable = "N (planners)",
+  `Young_% Moved` = paste0(n_young_moved, " / ", n_young_moved + n_young_stuck),
+  `Old_% Moved` = paste0(n_old_moved, " / ", n_old_moved + n_old_stuck),
+  `Total_% Moved` = paste0(n_total_moved, " / ", n_total_moved + n_total_stuck),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+conversion_by_group <- bind_rows(conversion_by_group, n_row)
+
+# Remove Other Race and Age rows from display (not comparable as conversion rates)
+conversion_by_group_display <- conversion_by_group %>%
+  filter(Variable != "Other Race", Variable != "Age (mean, SD)")
+
+styled_table(conversion_by_group_display, "Conversion Rates by Demographic Group")
+
+export_descriptive_table(conversion_by_group, "plan_action_conversion_by_group.csv")
+```
+
+```{r conversion-rates-plot, fig.width=10, fig.height=8}
+# Prepare data for plotting
+conversion_plot_data <- conversion_by_group_display %>%
+  # Convert percentage strings to numeric
+  mutate(
+    Young_pct = as.numeric(gsub("%", "", `Young_% Moved`)),
+    Old_pct = as.numeric(gsub("%", "", `Old_% Moved`))
+  ) %>%
+  # Reshape to long format
+  select(Variable, Young_pct, Old_pct) %>%
+  pivot_longer(cols = c(Young_pct, Old_pct),
+               names_to = "Age_Group",
+               values_to = "Conversion_Rate") %>%
+  mutate(Age_Group = factor(Age_Group, levels = c("Young_pct", "Old_pct"),
+                             labels = c("Young", "Old")))
+
+# Sort variables by conversion rate within each age group (highest to lowest)
+conversion_plot_data <- conversion_plot_data %>%
+  group_by(Age_Group) %>%
+  arrange(desc(Conversion_Rate)) %>%
+  mutate(Variable_ordered = factor(Variable, levels = rev(unique(Variable)))) %>%
+  ungroup()
+
+# Create faceted plot
+ggplot(conversion_plot_data, aes(x = Variable_ordered, y = Conversion_Rate, fill = Age_Group)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  facet_wrap(~Age_Group, ncol = 1, scales = "free_x") +
+  coord_flip() +
+  scale_fill_manual(values = c("Young" = "#2166AC", "Old" = "#B2182B")) +
+  labs(
+    title = "Conversion Rates by Demographic Group and Age",
+    subtitle = "Bars sorted by conversion rate (highest to lowest) within each age group",
+    x = "",
+    y = "Conversion Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 11, face = "italic"),
+    strip.text = element_text(size = 12, face = "bold"),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 100))
+```
+
+More stable socioeconomic groups (BA or Greater, Homeowners, Full-time Employed, Married/Cohabiting) show higher conversion rates. This pattern indicates that follow-through is associated with having resources to execute a planned move, not just the intention. The racial differences in conversion rates may reflect differences in access to resources necessary for mobility. The higher conversion rates among older Black respondents compared to younger Black respondents may reflect sample selection: older Black adults in the Bay Area may represent a more socioeconomically stable subset of the broader Black population.
+
+# 4. Stuck Planners: Who Plans to Move But Doesn't?
+
+The table below shows stuck rates by demographic group (e.g., "Of Black young planners, what % got stuck and didn't move?"). This is the inverse of section 3, showing which demographic groups are most likely to be unable to execute their moving plans.
+
+Among young adults, Black respondents have the highest stuck rates, while Latino respondents have the lowest. This mirrors the conversion rate patterns from section 3. Among older adults, older Black respondents have the lowest stuck rates, while older Latino respondents show higher rates of being stuck. Less stable groups (renters, those without BA degrees, not full-time employed, not married/cohabiting) show substantially higher stuck rates. These patterns indicate that inability to execute planned moves is associated with fewer socioeconomic resources.
+
+```{r stuck-rates-by-group}
+demo_vars <- list(
+  "Black" = "black_race",
+  "Asian" = "asian_race",
+  "Latino" = "latino_eth",
+  "Other Race" = "other_race",
+  "Female" = "female",
+  "Age (mean, SD)" = "age",
+  "BA or Greater" = "BA_or_greater",
+  "Homeowner" = "Owns_home",
+  "Full-time Employed" = "Full_Time",
+  "Married/Cohabiting" = "Marr_Cohab"
+)
+
+stuck_by_group <- create_stuck_rates_by_group(df, demo_vars, continuous_vars = c("age"))
+
+# Add N row (same planners as conversion table)
+stuck_planner_df <- df %>%
+  group_by(prim_key) %>%
+  summarise(
+    agegroup = first(agegroup),
+    ever_planned = as.integer(any(Plan_to_Move == 1, na.rm = TRUE)),
+    ever_moved = as.integer(any(Moved_w23 == 1, na.rm = TRUE)),
+    first_plan_wave = ifelse(any(Plan_to_Move == 1), min(WAVE[Plan_to_Move == 1]), NA),
+    first_move_wave = ifelse(any(Moved_w23 == 1), min(WAVE[Moved_w23 == 1]), NA),
+    .groups = "drop"
+  ) %>%
+  filter(ever_planned == 1) %>%
+  mutate(
+    converted = ifelse(ever_moved == 1 & !is.na(first_move_wave) & first_move_wave >= first_plan_wave, 1, 0)
+  )
+
+n_young_stuck_s <- sum(stuck_planner_df$agegroup == 0 & stuck_planner_df$converted == 0, na.rm = TRUE)
+n_young_moved_s <- sum(stuck_planner_df$agegroup == 0 & stuck_planner_df$converted == 1, na.rm = TRUE)
+n_old_stuck_s <- sum(stuck_planner_df$agegroup == 1 & stuck_planner_df$converted == 0, na.rm = TRUE)
+n_old_moved_s <- sum(stuck_planner_df$agegroup == 1 & stuck_planner_df$converted == 1, na.rm = TRUE)
+n_total_stuck_s <- sum(stuck_planner_df$converted == 0, na.rm = TRUE)
+n_total_moved_s <- sum(stuck_planner_df$converted == 1, na.rm = TRUE)
+
+n_row_stuck <- data.frame(
+  Variable = "N (planners)",
+  `Young_% Stuck` = paste0(n_young_stuck_s, " / ", n_young_stuck_s + n_young_moved_s),
+  `Old_% Stuck` = paste0(n_old_stuck_s, " / ", n_old_stuck_s + n_old_moved_s),
+  `Total_% Stuck` = paste0(n_total_stuck_s, " / ", n_total_stuck_s + n_total_moved_s),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+stuck_by_group <- bind_rows(stuck_by_group, n_row_stuck)
+
+# Remove Other Race and Age rows from display (not comparable as stuck rates)
+stuck_by_group_display <- stuck_by_group %>%
+  filter(Variable != "Other Race", Variable != "Age (mean, SD)")
+
+styled_table(stuck_by_group_display, "Stuck Rates by Demographic Group")
+
+export_descriptive_table(stuck_by_group, "plan_action_stuck_by_group.csv")
+```
+
+```{r stuck-rates-plot, fig.width=10, fig.height=8}
+# Prepare data for plotting
+stuck_plot_data <- stuck_by_group_display %>%
+  # Convert percentage strings to numeric
+  mutate(
+    Young_pct = as.numeric(gsub("%", "", `Young_% Stuck`)),
+    Old_pct = as.numeric(gsub("%", "", `Old_% Stuck`))
+  ) %>%
+  # Reshape to long format
+  select(Variable, Young_pct, Old_pct) %>%
+  pivot_longer(cols = c(Young_pct, Old_pct),
+               names_to = "Age_Group",
+               values_to = "Stuck_Rate") %>%
+  mutate(Age_Group = factor(Age_Group, levels = c("Young_pct", "Old_pct"),
+                             labels = c("Young", "Old")))
+
+# Sort variables by stuck rate within each age group (highest to lowest)
+stuck_plot_data <- stuck_plot_data %>%
+  group_by(Age_Group) %>%
+  arrange(desc(Stuck_Rate)) %>%
+  mutate(Variable_ordered = factor(Variable, levels = rev(unique(Variable)))) %>%
+  ungroup()
+
+# Create faceted plot
+ggplot(stuck_plot_data, aes(x = Variable_ordered, y = Stuck_Rate, fill = Age_Group)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  facet_wrap(~Age_Group, ncol = 1, scales = "free_x") +
+  coord_flip() +
+  scale_fill_manual(values = c("Young" = "#2166AC", "Old" = "#B2182B")) +
+  labs(
+    title = "Stuck Rates by Demographic Group and Age",
+    subtitle = "Bars sorted by stuck rate (highest to lowest) within each age group",
+    x = "",
+    y = "Stuck Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 11, face = "italic"),
+    strip.text = element_text(size = 12, face = "bold"),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 100))
+```
+
+The stuck rate patterns provide clear evidence that barriers to residential mobility are structural and resource-based. Groups with lower socioeconomic stability consistently show higher rates of being unable to execute planned moves, regardless of age. This suggests that housing policy interventions aimed at facilitating mobility (such as rental assistance, moving cost subsidies, or flexible lease terms) may be particularly beneficial for renters, those without college degrees, and those in precarious employment situations.
+
+## Network Anchors or Supports?
+
+Do networks anchor people in place (stuck planners have more local ties) or support mobility (successful movers have more local ties)? This table compares average network size between planners who got stuck and planners who successfully moved.
+
+The network patterns differ notably between young and old adults. Among young adults, those who successfully moved have more distant kin (> 60 min away), while stuck planners have fewer distant kin ties. Among older adults, the pattern reverses: stuck planners have more distant kin, while successful movers have fewer. These contrasting patterns may reflect different family obligation structures or support systems between younger and older adults.
+
+```{r network-anchors, warning=FALSE}
+network_type_vars <- list(
+  "Immediate Kin" = "ImmedKin",
+  "Extended Kin" = "ExtKin",
+  "Non-Kin" = "NonKin",
+  "Close Ties" = "Close"
+)
+
+network_anchors <- create_network_anchor_table(df, network_type_vars, continuous_vars = unlist(network_type_vars))
+
+styled_table(network_anchors, "Network Ties: Stuck Planners vs. Successful Movers")
+
+export_descriptive_table(network_anchors, "plan_action_network_anchors.csv")
+```
+
+```{r network-anchors-detailed, warning=FALSE}
+# Create combined within-60-min variables (excluding household)
+df <- df %>%
+  mutate(
+    Kin_within_60_not_HH = Kin_in_5_N + Kin_in_5_to_60_N,
+    Nonkin_within_60_not_HH = Nonkin_in_5_N + Nonkin_in_5_to_60_N
+  )
+
+network_location_vars <- list(
+  "Kin in Household" = "Kin_in_HH_N",
+  "Kin within 60 min (not in HH)" = "Kin_within_60_not_HH",
+  "Kin > 60 min" = "Kin_GT_Hour_N",
+  "Non-kin in Household" = "Nonkin_in_HH_N",
+  "Non-kin within 60 min (not in HH)" = "Nonkin_within_60_not_HH",
+  "Non-kin > 60 min" = "Nonkin_GT_Hour_N"
+)
+
+network_anchors_detailed <- create_network_anchor_table(df, network_location_vars,
+                                                         continuous_vars = unlist(network_location_vars))
+
+styled_table(network_anchors_detailed, "Network Ties by Distance: Stuck Planners vs. Successful Movers")
+
+export_descriptive_table(network_anchors_detailed, "plan_action_network_anchors_detailed.csv")
+```
+
+```{r network-anchors-detailed-plot, fig.width=10, fig.height=8}
+library(ggplot2)
+library(tidyr)
+
+# Prepare data for plotting (extract means from "mean (SD)" format and exclude N row)
+plot_network_data <- network_anchors_detailed %>%
+  filter(Variable != "N") %>%
+  mutate(
+    Young_Stuck_mean = as.numeric(gsub(" \\(.*", "", Young_Stuck)),
+    Young_Moved_mean = as.numeric(gsub(" \\(.*", "", Young_Moved)),
+    Old_Stuck_mean = as.numeric(gsub(" \\(.*", "", Old_Stuck)),
+    Old_Moved_mean = as.numeric(gsub(" \\(.*", "", Old_Moved))
+  ) %>%
+  select(Variable, Young_Stuck_mean, Young_Moved_mean, Old_Stuck_mean, Old_Moved_mean) %>%
+  pivot_longer(cols = -Variable, names_to = "Group", values_to = "Mean_Ties") %>%
+  mutate(
+    Age_Group = case_when(
+      grepl("Young", Group) ~ "Young (21-30)",
+      grepl("Old", Group) ~ "Old (50-70)"
+    ),
+    Status = case_when(
+      grepl("Stuck", Group) ~ "Stuck",
+      grepl("Moved", Group) ~ "Moved"
+    ),
+    Age_Group = factor(Age_Group, levels = c("Young (21-30)", "Old (50-70)")),
+    Status = factor(Status, levels = c("Stuck", "Moved")),
+    # Order variables logically
+    Variable = factor(Variable, levels = c("Kin in Household", "Kin within 60 min (not in HH)", "Kin > 60 min",
+                                            "Non-kin in Household", "Non-kin within 60 min (not in HH)", "Non-kin > 60 min"))
+  )
+
+ggplot(plot_network_data, aes(x = Variable, y = Mean_Ties, fill = Status)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~Age_Group, ncol = 1) +
+  scale_fill_manual(values = c(
+    "Stuck" = "#D73027",      # Red for stuck
+    "Moved" = "#4575B4"       # Blue for moved
+  )) +
+  labs(
+    title = "Network Ties by Distance: Stuck Planners vs. Successful Movers",
+    subtitle = "Mean number of ties by plan-action outcome and age group",
+    x = "",
+    y = "Mean Number of Ties",
+    fill = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 25, hjust = 1, size = 10),
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.major.x = element_blank(),
+    strip.text = element_text(face = "bold", size = 11)
+  ) +
+  coord_cartesian(ylim = c(0, 6))
+```
+
+# 5. Unplanned Movers
+
+The table below shows unplanned mover rates by demographic group (e.g., "Of Black young movers, what % moved without planning?"). This reveals which groups are more likely to make reactive or opportunistic moves rather than deliberate, planned relocations.
+
+Unplanned moves are more common among less stable groups. Among both young and old adults, renters, those without college degrees, and those not in full-time employment show higher rates of unplanned moves. This pattern indicates that unplanned moves are associated with external circumstances or constraints rather than deliberate choice. The high unplanned mover rates among less stable SES groups contrast with the lower conversion rates these same groups showed in section 3, revealing a dual burden: when less stable groups plan to move, they show lower rates of executing those plans, yet they also show higher rates of unplanned moves.
+
+```{r unplanned-rates-by-group}
+demo_vars <- list(
+  "Black" = "black_race",
+  "Asian" = "asian_race",
+  "Latino" = "latino_eth",
+  "Other Race" = "other_race",
+  "Female" = "female",
+  "Age (mean, SD)" = "age",
+  "BA or Greater" = "BA_or_greater",
+  "Homeowner" = "Owns_home",
+  "Full-time Employed" = "Full_Time",
+  "Married/Cohabiting" = "Marr_Cohab"
+)
+
+unplanned_by_group <- create_unplanned_rates_by_group(df, demo_vars, continuous_vars = c("age"))
+
+# Add N row
+mover_df <- df %>%
+  group_by(prim_key) %>%
+  summarise(
+    agegroup = first(agegroup),
+    ever_moved = as.integer(any(Moved_w23 == 1, na.rm = TRUE)),
+    ever_planned = as.integer(any(Plan_to_Move == 1, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  filter(ever_moved == 1) %>%
+  mutate(
+    unplanned = as.integer(ever_planned == 0)
+  )
+
+n_young_unplanned <- sum(mover_df$agegroup == 0 & mover_df$unplanned == 1, na.rm = TRUE)
+n_young_planned <- sum(mover_df$agegroup == 0 & mover_df$unplanned == 0, na.rm = TRUE)
+n_old_unplanned <- sum(mover_df$agegroup == 1 & mover_df$unplanned == 1, na.rm = TRUE)
+n_old_planned <- sum(mover_df$agegroup == 1 & mover_df$unplanned == 0, na.rm = TRUE)
+n_total_unplanned <- sum(mover_df$unplanned == 1, na.rm = TRUE)
+n_total_planned <- sum(mover_df$unplanned == 0, na.rm = TRUE)
+
+n_row_unplanned <- data.frame(
+  Variable = "N (movers)",
+  `Young_% Unplanned` = paste0(n_young_unplanned, " / ", n_young_unplanned + n_young_planned),
+  `Old_% Unplanned` = paste0(n_old_unplanned, " / ", n_old_unplanned + n_old_planned),
+  `Total_% Unplanned` = paste0(n_total_unplanned, " / ", n_total_unplanned + n_total_planned),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+unplanned_by_group <- bind_rows(unplanned_by_group, n_row_unplanned)
+
+# Remove Other Race and Age rows from display
+unplanned_by_group_display <- unplanned_by_group %>%
+  filter(Variable != "Other Race", Variable != "Age (mean, SD)")
+
+styled_table(unplanned_by_group_display, "Unplanned Mover Rates by Demographic Group")
+
+export_descriptive_table(unplanned_by_group, "plan_action_unplanned_by_group.csv")
+```
+
+```{r unplanned-rates-plot, fig.width=10, fig.height=8}
+# Prepare data for plotting
+unplanned_plot_data <- unplanned_by_group_display %>%
+  # Convert percentage strings to numeric
+  mutate(
+    Young_pct = as.numeric(gsub("%", "", `Young_% Unplanned`)),
+    Old_pct = as.numeric(gsub("%", "", `Old_% Unplanned`))
+  ) %>%
+  # Reshape to long format
+  select(Variable, Young_pct, Old_pct) %>%
+  pivot_longer(cols = c(Young_pct, Old_pct),
+               names_to = "Age_Group",
+               values_to = "Unplanned_Rate") %>%
+  mutate(Age_Group = factor(Age_Group, levels = c("Young_pct", "Old_pct"),
+                             labels = c("Young", "Old")))
+
+# Sort variables by unplanned rate within each age group (highest to lowest)
+unplanned_plot_data <- unplanned_plot_data %>%
+  group_by(Age_Group) %>%
+  arrange(desc(Unplanned_Rate)) %>%
+  mutate(Variable_ordered = factor(Variable, levels = rev(unique(Variable)))) %>%
+  ungroup()
+
+# Create faceted plot
+ggplot(unplanned_plot_data, aes(x = Variable_ordered, y = Unplanned_Rate, fill = Age_Group)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  facet_wrap(~Age_Group, ncol = 1, scales = "free_x") +
+  coord_flip() +
+  scale_fill_manual(values = c("Young" = "#2166AC", "Old" = "#B2182B")) +
+  labs(
+    title = "Unplanned Mover Rates by Demographic Group and Age",
+    subtitle = "Bars sorted by unplanned rate (highest to lowest) within each age group",
+    x = "",
+    y = "Unplanned Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 11, face = "italic"),
+    strip.text = element_text(size = 12, face = "bold"),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 100))
+```
+
+## Detailed Comparison: Unplanned vs. Planned Movers
+
+```{r unplanned-movers-detailed, warning=FALSE}
+network_type_vars <- list(
+  "Immediate Kin" = "ImmedKin",
+  "Extended Kin" = "ExtKin",
+  "Non-Kin" = "NonKin",
+  "Close Ties" = "Close"
+)
+
+unplanned_network <- create_unplanned_movers_table(df, network_type_vars, continuous_vars = unlist(network_type_vars))
+
+styled_table(unplanned_network, "Network Characteristics: Unplanned vs. Planned Movers")
+
+export_descriptive_table(unplanned_network, "plan_action_unplanned_movers_network.csv")
+```
+
+# 8. Move Reasons by Planning Status
+
+This section examines **why** planned and unplanned movers moved, using the open-ended response data from a19i (reasons for moving). Do planned movers cite more deliberate, life-course reasons (career, partner) while unplanned movers cite more reactive reasons (conflict, financial, forced)?
+
+## Load Move Reasons Data
+
+```{r load-a19i-data}
+library(readxl)
+library(haven)
+
+# Load a19i data (reasons for moving)
+a19i_raw <- read_excel(here("data", "in", "Final_Merged_Codes_a19i_alternate.xlsx"))
+
+# Rename columns by position to handle corrupted column names
+new_names <- c("prim_key", "WAVE", "prim_key_wave", "a19i_response",
+               "a19i_partner_spouse", "a19i_relationship_end", "a19i_own_job_school",
+               "a19i_partner_job_school", "a19i_financial", "a19i_housing",
+               "a19i_new_environment", "a19i_family_support", "a19i_meet_friends",
+               "a19i_conflicts", "a19i_forced", "a19i_other", "a19i_not_clear",
+               "a19i_forced_financial", "a19i_not_forced_financial",
+               "a19i_financial_housing", "a19i_non_financial_housing",
+               "a19i_financial_family_support", "a19i_non_financial_family_support")
+names(a19i_raw) <- new_names
+a19i_raw$prim_key_wave <- as.character(as.numeric(a19i_raw$prim_key_wave))
+
+# Load main data to get planning status and agegroup
+df_plan <- read_dta(here("data", "R_DF.dta"))
+df_plan <- df_plan %>%
+  mutate(prim_key_wave = paste0(as.character(prim_key), WAVE)) %>%
+  select(prim_key_wave, Plan_to_Move, agegroup)
+
+# Merge with a19i
+a19i_plan <- a19i_raw %>%
+  left_join(df_plan, by = "prim_key_wave")
+
+# Create planning status (among movers only)
+a19i_plan <- a19i_plan %>%
+  mutate(planned_move = ifelse(Plan_to_Move == 1, 1, 0))
+
+n_planned <- sum(a19i_plan$planned_move == 1, na.rm = TRUE)
+n_unplanned <- sum(a19i_plan$planned_move == 0, na.rm = TRUE)
+n_total <- nrow(a19i_plan)
+
+cat(sprintf("Movers with a19i data: %d total (%d planned, %d unplanned)\n",
+            n_total, n_planned, n_unplanned))
+
+# Define move reason categories (same as script 07)
+move_reasons <- c(
+  "Partner/Relationship",
+  "Career (Own/Partner)",
+  "Financial",
+  "Housing",
+  "New Environment",
+  "Family/Friends",
+  "Conflict/Forced",
+  "Other/Unclear"
+)
+
+# Helper function to calculate N for each move reason
+calc_n_move <- function(data) {
+  c(
+    sum(data$a19i_partner_spouse == 1 | data$a19i_relationship_end == 1, na.rm = TRUE),
+    sum(data$a19i_own_job_school == 1 | data$a19i_partner_job_school == 1, na.rm = TRUE),
+    sum(data$a19i_financial == 1, na.rm = TRUE),
+    sum(data$a19i_housing == 1, na.rm = TRUE),
+    sum(data$a19i_new_environment == 1, na.rm = TRUE),
+    sum(data$a19i_family_support == 1 | data$a19i_meet_friends == 1, na.rm = TRUE),
+    sum(data$a19i_conflicts == 1 | data$a19i_forced == 1, na.rm = TRUE),
+    sum(data$a19i_other == 1 | data$a19i_not_clear == 1, na.rm = TRUE)
+  )
+}
+```
+
+## Overall: Planned vs. Unplanned Movers
+
+What reasons do planned vs. unplanned movers cite for their moves?
+
+```{r move-reasons-by-planning}
+# Calculate for planned vs unplanned
+planned_data <- a19i_plan %>% filter(planned_move == 1)
+unplanned_data <- a19i_plan %>% filter(planned_move == 0)
+
+planned_n <- calc_n_move(planned_data)
+unplanned_n <- calc_n_move(unplanned_data)
+total_n <- calc_n_move(a19i_plan)
+
+# Build table
+move_reasons_planning <- data.frame(
+  Reason = move_reasons,
+  Planned_N = planned_n,
+  Planned_Pct = sprintf("%.1f%%", 100 * planned_n / n_planned),
+  Unplanned_N = unplanned_n,
+  Unplanned_Pct = sprintf("%.1f%%", 100 * unplanned_n / n_unplanned),
+  Total_N = total_n,
+  Total_Pct = sprintf("%.1f%%", 100 * total_n / n_total),
+  stringsAsFactors = FALSE
+)
+
+# Add sample size row
+sample_row <- data.frame(
+  Reason = "N (movers)",
+  Planned_N = n_planned,
+  Planned_Pct = "",
+  Unplanned_N = n_unplanned,
+  Unplanned_Pct = "",
+  Total_N = n_total,
+  Total_Pct = "",
+  stringsAsFactors = FALSE
+)
+
+move_reasons_planning <- bind_rows(move_reasons_planning, sample_row)
+
+styled_table(move_reasons_planning, "Move Reasons: Planned vs. Unplanned Movers")
+
+export_descriptive_table(move_reasons_planning, "plan_action_move_reasons_by_planning.csv")
+```
+
+**Key patterns:** Contrary to the simple hypothesis that planned moves are "deliberate" and unplanned moves are "reactive," the patterns are more nuanced. Partner/relationship reasons are more common among unplanned movers (17.0% vs. 9.0%), likely reflecting the sudden nature of relationship endings (breakups, divorces). Career reasons are similar across both groups (~30-32%), suggesting career moves can be either planned opportunities or unexpected offers. Surprisingly, the combined conflict/forced category is slightly higher among planned movers (17.2% vs. 12.5%), but this appears to be driven by "forced" moves (15.7% vs. 7.5%) rather than conflicts (1.5% vs. 4.9%). This may reflect that forced moves—such as evictions, lease endings, or building sales—often come with advance notice, potentially allowing people to plan despite the involuntary nature of the move, while conflicts tend to be more sudden and reactive. Overall, the majority of movers (305 of 440, 69%) did not plan their moves in advance.
+
+```{r move-reasons-planning-plot, fig.width=10, fig.height=6}
+library(ggplot2)
+library(tidyr)
+
+# Prepare data for plotting (exclude N row)
+plot_data_planning <- move_reasons_planning %>%
+  filter(Reason != "N (movers)") %>%
+  select(Reason, Planned_Pct, Unplanned_Pct) %>%
+  pivot_longer(cols = c(Planned_Pct, Unplanned_Pct),
+               names_to = "Planning_Status", values_to = "Percent") %>%
+  mutate(
+    Percent = as.numeric(gsub("%", "", Percent)),
+    Planning_Status = ifelse(Planning_Status == "Planned_Pct", "Planned", "Unplanned"),
+    Planning_Status = factor(Planning_Status, levels = c("Planned", "Unplanned")),
+    Reason = factor(Reason, levels = c("Partner/Relationship", "Career (Own/Partner)",
+                                        "Financial", "Housing", "New Environment",
+                                        "Family/Friends", "Conflict/Forced", "Other/Unclear"))
+  )
+
+# Create bar plot
+ggplot(plot_data_planning, aes(x = Reason, y = Percent, fill = Planning_Status)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(values = c("Planned" = "#2166AC", "Unplanned" = "#B2182B"),
+                    name = "Planning Status") +
+  labs(
+    title = "Move Reasons: Planned vs. Unplanned Movers",
+    subtitle = "Percentage of movers citing each reason",
+    x = "",
+    y = "Percent"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.y = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 11, face = "italic"),
+    legend.position = "top",
+    legend.title = element_text(size = 10, face = "bold"),
+    panel.grid.major.x = element_blank()
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 35))
+```
+
+## By Age Group: Planned vs. Unplanned
+
+How do move reason patterns differ by age within planned and unplanned movers?
+
+```{r move-reasons-planning-by-age}
+# Split by age and planning status
+young_planned <- a19i_plan %>% filter(agegroup == 0, planned_move == 1)
+young_unplanned <- a19i_plan %>% filter(agegroup == 0, planned_move == 0)
+old_planned <- a19i_plan %>% filter(agegroup == 1, planned_move == 1)
+old_unplanned <- a19i_plan %>% filter(agegroup == 1, planned_move == 0)
+
+n_young_planned <- nrow(young_planned)
+n_young_unplanned <- nrow(young_unplanned)
+n_old_planned <- nrow(old_planned)
+n_old_unplanned <- nrow(old_unplanned)
+
+cat(sprintf("Young: %d planned, %d unplanned\n", n_young_planned, n_young_unplanned))
+cat(sprintf("Old: %d planned, %d unplanned\n", n_old_planned, n_old_unplanned))
+
+young_planned_n <- calc_n_move(young_planned)
+young_unplanned_n <- calc_n_move(young_unplanned)
+old_planned_n <- calc_n_move(old_planned)
+old_unplanned_n <- calc_n_move(old_unplanned)
+
+# Build table
+move_reasons_age_plan <- data.frame(
+  Reason = move_reasons,
+  Young_Planned = sprintf("%.1f%%", 100 * young_planned_n / n_young_planned),
+  Young_Unplanned = sprintf("%.1f%%", 100 * young_unplanned_n / n_young_unplanned),
+  Old_Planned = sprintf("%.1f%%", 100 * old_planned_n / n_old_planned),
+  Old_Unplanned = sprintf("%.1f%%", 100 * old_unplanned_n / n_old_unplanned),
+  stringsAsFactors = FALSE
+)
+
+# Add N row
+n_row <- data.frame(
+  Reason = "N",
+  Young_Planned = as.character(n_young_planned),
+  Young_Unplanned = as.character(n_young_unplanned),
+  Old_Planned = as.character(n_old_planned),
+  Old_Unplanned = as.character(n_old_unplanned),
+  stringsAsFactors = FALSE
+)
+
+move_reasons_age_plan <- bind_rows(move_reasons_age_plan, n_row)
+
+styled_table(move_reasons_age_plan, "Move Reasons by Age Group and Planning Status")
+
+export_descriptive_table(move_reasons_age_plan, "plan_action_move_reasons_planning_by_age.csv")
+```
+
+**Key patterns:** Age sharply differentiates move reasons by planning status. Among young adults, career drives both planned (37.7%) and unplanned (33.1%) moves, while partner/relationship reasons are far more common in unplanned moves (18.6% vs. 9.6%). Among older adults (note: small N=20 for planned), the picture differs dramatically: financial reasons dominate planned moves (40.0%), alongside family/friends (20.0%) and conflict (25.0%), suggesting older planned movers are making deliberate relocations due to economic necessity or to be near family. Strikingly, zero older planned movers cited career reasons, while 15.9% of older unplanned movers did—suggesting late-career job changes are more often unexpected.

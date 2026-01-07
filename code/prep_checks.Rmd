@@ -1,0 +1,118 @@
+---
+title: "Data Preparation Checks"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+```
+
+# Overview
+
+This notebook runs diagnostic checks on the prepared dataset.
+Run this after `run_all_prep.R` to verify data quality.
+
+## Load Libraries and Data
+
+```{r load-data}
+library(here)
+library(dplyr)
+
+# Load the prepared dataset
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+cat(sprintf("Loaded dataset: %d observations, %d variables\n", nrow(df), ncol(df)))
+```
+
+# Basic Data Checks
+
+## WAVE Distribution
+
+```{r wave-distribution}
+cat("\nWAVE distribution:\n")
+print(table(df$WAVE))
+```
+
+## WAVE by Moved_w23 Cross-tabulation
+
+Wave 1 has more NAs because `Moved_w23` captures moves between waves 2-3, so Wave 1 values were imputed from `a19c_onlyw1` (time at residence). The total per wave (~1159) is consistent, indicating a balanced panel. NAs represent respondents who didn't answer or dropped out.
+
+```{r wave-moved-crosstab}
+cat("\nWAVE by Moved_w23 cross-tabulation:\n")
+print(table(df$WAVE, df$Moved_w23, useNA = "ifany"))
+```
+
+# Multicollinearity Checks
+
+## Correlation Matrix
+
+No concerning multicollinearity: all correlations are below 0.4. Notable moderate correlations (|r| > 0.25) include homeownership with kin in household (0.34) and less moving (-0.33), and a trade-off between kin/nonkin in household (-0.28). Patterns are substantively sensible - homeownership associates with stability, while renting/roommates associates with mobility.
+
+```{r multicollinearity-check}
+cor_vars <- c("Marr_Cohab", "Full_Time", "LEX_FinanProb", "LT_BA", "LE_NewJob",
+              "lag_New_School", "lag_Moved_Town", "Plan_to_Move", "lag_Kin_in_5_N",
+              "lag_Nonkin_in_5_N", "lag_Nonkin_in_HH_N", "lag_Kin_in_HH_N", "lag_Owns_Home")
+
+cat("\nCorrelation matrix for multicollinearity check:\n")
+cor_matrix <- df %>%
+  select(all_of(cor_vars)) %>%
+  cor(use = "pairwise.complete.obs")
+print(round(cor_matrix, 3))
+```
+
+## VIF Check
+
+Nothing concerning here either.
+```{r vif-check}
+vif_model <- lm(Moved_w23 ~ Marr_Cohab + Full_Time + LEX_FinanProb + LT_BA +
+                  LE_NewJob + lag_New_School + lag_Moved_Town + Plan_to_Move +
+                  lag_Kin_in_5_N + lag_Nonkin_in_5_N + lag_Nonkin_in_HH_N +
+                  lag_Kin_in_HH_N + lag_Owns_Home,
+                data = df)
+
+cat("\nVIF values:\n")
+if (requireNamespace("car", quietly = TRUE)) {
+  print(car::vif(vif_model))
+} else {
+  cat("Install 'car' package for VIF calculation: install.packages('car')\n")
+}
+```
+
+# Exploratory Analysis
+
+## Out-of-Bay Movers
+
+Examine young people who moved out of Bay in multiple waves. Some individuals appear to have moved out of the Bay in both W2 and W3. Per CSF memo (2/27/2024), this is likely due to: (1) mis-remembering and reporting the same move twice, (2) sequential moves where respondents interpreted the question geographically (e.g., moved NY→FL and answered "Out of California"), or (3) rare return-then-leave cases (only ~2 cases). Not considered a critical data issue.
+
+**Detailed case review identified 5 cases where W3 responses imply local moves** (e.g., "apartment too loud", "housemate issues", "house was sold", "leaving parent's house", "roommate issues") rather than out-of-Bay moves. These are corrected in `01_create_long_variables.Rmd` by recoding `Moved_out_of_Bay_w23 = 0` at Wave 3 for: 5000000000027, 6000000003997, 7000000003067, 8000000000852, 8000000000885. The remaining double-movers appear to be legitimate sequential long-distance moves (e.g., Bay→Hawaii→New Zealand, Bay→China→grad school).
+
+```{r out-of-bay-analysis}
+out_of_bay_young <- df %>%
+  filter(Moved_out_of_Bay_w23 == 1) %>%
+  filter(WAVE != 1) %>%
+  filter(agegroup == 0) %>%
+  group_by(prim_key) %>%
+  mutate(prim_key_dup = n() - 1) %>%
+  ungroup()
+
+cat("\nDuplicate prim_key counts among young out-of-Bay movers:\n")
+print(table(out_of_bay_young$prim_key_dup))
+
+# Keep only those with duplicates
+out_of_bay_duplicates <- out_of_bay_young %>%
+  filter(prim_key_dup == 1) %>%
+  select(prim_key, Moved_out_of_Bay_w23)
+
+cat("\nYoung individuals who moved out of Bay in both Wave 2 and 3:\n")
+print(out_of_bay_duplicates)
+```
+
+# Summary
+
+```{r summary}
+cat("\n", paste(rep("=", 70), collapse = ""), "\n")
+cat("DATA CHECKS COMPLETE\n")
+cat(paste(rep("=", 70), collapse = ""), "\n")
+```
