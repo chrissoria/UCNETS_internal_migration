@@ -1,0 +1,951 @@
+---
+title: "Within-Person Network Changes: Movers vs Non-Movers"
+author: "Migration Networks UCNets Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: !expr here::here("code", "styles.css")
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.width = 10, fig.height = 6)
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+# Overview
+
+This notebook visualizes **within-person changes in network variables** (kin, non-kin, extended kin) comparing movers to non-movers. Plots are organized around specific research questions.
+
+## Research Questions
+
+This analysis addresses the following questions:
+
+1. **Do movers have more non-kin ties after their moves?** - Examines whether moving is associated with changes in friendship networks
+2. **Do movers start with different networks than non-movers?** - Tests for selection effects (pre-existing differences)
+3. **Are kin networks affected by moving?** - Compares stability of family vs. friendship ties around moves
+4. **Do patterns differ by move type?** - Compares within-Bay (local) vs. out-of-Bay (regional) moves
+
+## Load Libraries
+
+```{r libraries}
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Set consistent theme
+theme_set(theme_minimal(base_size = 12))
+```
+
+## Load and Prepare Data
+
+```{r load-data}
+df <- readRDS(here("data", "out", "R_DF.rds"))
+
+cat(sprintf("Loaded %d observations for %d unique individuals\n",
+            nrow(df), n_distinct(df$prim_key)))
+cat(sprintf("Waves: %s\n", paste(sort(unique(df$WAVE)), collapse = ", ")))
+```
+
+```{r create-indicators}
+# Create person-level "ever moved" indicator
+df <- df %>%
+  group_by(prim_key) %>%
+  mutate(
+    ever_moved = max(Moved_w23, na.rm = TRUE),
+    ever_moved_out_bay = max(Moved_out_of_Bay_w23, na.rm = TRUE),
+    ever_moved_in_bay = max(Moved_in_Bay_w23, na.rm = TRUE),
+    # Wave of first move (for event-study style plots)
+    first_move_wave = ifelse(any(Moved_w23 == 1, na.rm = TRUE),
+                              min(WAVE[Moved_w23 == 1], na.rm = TRUE), NA)
+  ) %>%
+  ungroup()
+
+# Create wave-to-wave change variables
+df <- df %>%
+  arrange(prim_key, WAVE) %>%
+  group_by(prim_key) %>%
+  mutate(
+    # Change in local networks
+    delta_kin_local = Kin_within_60_N - lag(Kin_within_60_N),
+    delta_nonkin_local = Nonkin_within_60_N - lag(Nonkin_within_60_N),
+    delta_kin_hh = Kin_in_HH_N - lag(Kin_in_HH_N),
+    delta_nonkin_hh = Nonkin_in_HH_N - lag(Nonkin_in_HH_N),
+    # Change in distant networks
+    delta_kin_distant = Kin_GT_Hour_N - lag(Kin_GT_Hour_N),
+    delta_nonkin_distant = Nonkin_GT_Hour_N - lag(Nonkin_GT_Hour_N)
+  ) %>%
+  ungroup()
+
+# Labels for plotting
+df <- df %>%
+  mutate(
+    mover_label = factor(ever_moved, levels = c(0, 1),
+                         labels = c("Non-Mover", "Mover")),
+    agegroup_label = factor(agegroup, levels = c(0, 1),
+                            labels = c("Young (21-30)", "Old (50-70)"))
+  )
+
+cat("\nMover status (person-level):\n")
+df %>%
+  distinct(prim_key, ever_moved, agegroup_label) %>%
+  count(agegroup_label, ever_moved) %>%
+  print()
+```
+
+```{r sample-summary}
+cat("\nNetwork variable summary:\n")
+df %>%
+  summarise(
+    across(c(Kin_within_60_N, Nonkin_within_60_N, Kin_GT_Hour_N, Nonkin_GT_Hour_N),
+           list(mean = ~mean(., na.rm = TRUE), sd = ~sd(., na.rm = TRUE)),
+           .names = "{.col}_{.fn}")
+  ) %>%
+  pivot_longer(everything(), names_to = "stat", values_to = "value") %>%
+  print(n = 20)
+```
+
+# 1. Individual Trajectories: Do movers start with different networks?
+
+**Research Question:** Do movers differ from non-movers in their baseline network characteristics, suggesting a selection effect?
+
+These spaghetti plots show each person's network trajectory across waves (thin lines = individuals, bold lines = group means). This visualization reveals:
+- Whether movers have systematically different network sizes at baseline
+- The variability in individual experiences within each group
+- Whether trajectories diverge over time
+
+## 1.1 Local Kin Network
+
+```{r spaghetti-kin-local, fig.height=8}
+# Sample for readability (too many lines is unreadable)
+# Drop NAs to avoid extra facet panels
+# Sample 50 per cell (mover status x age group = 4 cells, 200 total)
+set.seed(42)
+sample_ids <- df %>%
+  filter(!is.na(ever_moved), !is.na(agegroup)) %>%
+  distinct(prim_key, ever_moved, agegroup) %>%
+  group_by(ever_moved, agegroup) %>%
+  slice_sample(n = 50) %>%
+  ungroup() %>%
+  pull(prim_key)
+
+df_sample <- df %>%
+  filter(prim_key %in% sample_ids, !is.na(mover_label), !is.na(agegroup_label))
+
+ggplot(df_sample, aes(x = WAVE, y = Kin_within_60_N, group = prim_key)) +
+
+geom_line(aes(color = mover_label), alpha = 0.3) +
+stat_summary(aes(group = mover_label, color = mover_label),
+               fun = mean, geom = "line", linewidth = 2) +
+  facet_grid(agegroup_label ~ mover_label) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Individual Trajectories: Local Kin (within 60 min)",
+    subtitle = "Thin lines = individuals (n=50 per group), bold lines = group means",
+    x = "Wave",
+    y = "Number of Kin within 60 minutes",
+    color = ""
+  ) +
+  theme(legend.position = "none")
+```
+
+## 1.2 Local Non-Kin Network
+
+```{r spaghetti-nonkin-local, fig.height=8}
+ggplot(df_sample, aes(x = WAVE, y = Nonkin_within_60_N, group = prim_key)) +
+  geom_line(aes(color = mover_label), alpha = 0.3) +
+  stat_summary(aes(group = mover_label, color = mover_label),
+               fun = mean, geom = "line", linewidth = 2) +
+  facet_grid(agegroup_label ~ mover_label) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Individual Trajectories: Local Non-Kin (within 60 min)",
+    subtitle = "Thin lines = individuals (n=50 per group), bold lines = group means",
+    x = "Wave",
+    y = "Number of Non-Kin within 60 minutes",
+    color = ""
+  ) +
+  theme(legend.position = "none")
+```
+
+## 1.3 Distant Kin Network (>1 hour)
+
+```{r spaghetti-kin-distant, fig.height=8}
+ggplot(df_sample, aes(x = WAVE, y = Kin_GT_Hour_N, group = prim_key)) +
+  geom_line(aes(color = mover_label), alpha = 0.3) +
+  stat_summary(aes(group = mover_label, color = mover_label),
+               fun = mean, geom = "line", linewidth = 2) +
+  facet_grid(agegroup_label ~ mover_label) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Individual Trajectories: Distant Kin (>1 hour)",
+    subtitle = "Thin lines = individuals (n=50 per group), bold lines = group means",
+    x = "Wave",
+    y = "Number of Kin >1 hour away",
+    color = ""
+  ) +
+  theme(legend.position = "none")
+```
+
+# 2. Do movers have more non-kin ties after their moves?
+
+**Research Question:** How do friendship (non-kin) and family (kin) networks change around residential moves?
+
+This section uses mean trajectory plots with 95% confidence bands to compare network sizes between movers and non-movers. Key sub-questions:
+- **2.1-2.6**: Overall trajectories by network type (local kin, local non-kin, distant ties)
+- **2.7**: Event-study plots centered on move timing (before/after move)
+- **2.8**: Matched counterfactual comparisons (movers vs. similar non-movers)
+
+## 2.1 Local Networks (Kin and Non-Kin)
+
+```{r mean-trajectory-local, fig.height=7}
+traj_local <- df %>%
+  filter(!is.na(Kin_within_60_N), !is.na(Nonkin_within_60_N),
+         !is.na(mover_label), !is.na(agegroup_label)) %>%
+  group_by(WAVE, mover_label, agegroup_label) %>%
+  summarise(
+    kin_mean = mean(Kin_within_60_N, na.rm = TRUE),
+    kin_se = sd(Kin_within_60_N, na.rm = TRUE) / sqrt(n()),
+    nonkin_mean = mean(Nonkin_within_60_N, na.rm = TRUE),
+    nonkin_se = sd(Nonkin_within_60_N, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(kin_mean, kin_se, nonkin_mean, nonkin_se),
+    names_to = c("network", ".value"),
+    names_pattern = "(kin|nonkin)_(mean|se)"
+  ) %>%
+  mutate(network = factor(network, levels = c("kin", "nonkin"),
+                          labels = c("Kin", "Non-Kin")))
+
+ggplot(traj_local, aes(x = WAVE, y = mean, color = mover_label, fill = mover_label)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_grid(agegroup_label ~ network) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  scale_fill_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Mean Trajectories: Local Networks (within 60 min)",
+    subtitle = "Shaded bands = 95% CI",
+    x = "Wave",
+    y = "Mean Number of Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top")
+```
+
+## 2.2 Distant Networks (>1 hour)
+
+```{r mean-trajectory-distant, fig.height=7}
+traj_distant <- df %>%
+  filter(!is.na(Kin_GT_Hour_N), !is.na(Nonkin_GT_Hour_N),
+         !is.na(mover_label), !is.na(agegroup_label)) %>%
+  group_by(WAVE, mover_label, agegroup_label) %>%
+  summarise(
+    kin_mean = mean(Kin_GT_Hour_N, na.rm = TRUE),
+    kin_se = sd(Kin_GT_Hour_N, na.rm = TRUE) / sqrt(n()),
+    nonkin_mean = mean(Nonkin_GT_Hour_N, na.rm = TRUE),
+    nonkin_se = sd(Nonkin_GT_Hour_N, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(kin_mean, kin_se, nonkin_mean, nonkin_se),
+    names_to = c("network", ".value"),
+    names_pattern = "(kin|nonkin)_(mean|se)"
+  ) %>%
+  mutate(network = factor(network, levels = c("kin", "nonkin"),
+                          labels = c("Kin", "Non-Kin")))
+
+ggplot(traj_distant, aes(x = WAVE, y = mean, color = mover_label, fill = mover_label)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_grid(agegroup_label ~ network) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  scale_fill_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Mean Trajectories: Distant Networks (>1 hour)",
+    subtitle = "Shaded bands = 95% CI",
+    x = "Wave",
+    y = "Mean Number of Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top")
+```
+
+## 2.3 Non-Kin Networks (All Distances)
+
+```{r mean-trajectory-nonkin-all, fig.height=7}
+traj_nonkin <- df %>%
+  filter(!is.na(mover_label), !is.na(agegroup_label)) %>%
+  pivot_longer(
+    cols = c(Nonkin_in_HH_N, Nonkin_within_60_N, Nonkin_GT_Hour_N),
+    names_to = "distance",
+    values_to = "count"
+  ) %>%
+  filter(!is.na(count)) %>%
+  mutate(
+    distance = factor(distance,
+                      levels = c("Nonkin_in_HH_N", "Nonkin_within_60_N", "Nonkin_GT_Hour_N"),
+                      labels = c("In Household", "Within 60 min", ">1 Hour"))
+  ) %>%
+  group_by(WAVE, mover_label, agegroup_label, distance) %>%
+  summarise(
+    mean = mean(count, na.rm = TRUE),
+    se = sd(count, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(traj_nonkin, aes(x = WAVE, y = mean, color = mover_label, fill = mover_label)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_grid(agegroup_label ~ distance, scales = "free_y") +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  scale_fill_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Mean Trajectories: Non-Kin Networks by Distance",
+    subtitle = "Shaded bands = 95% CI",
+    x = "Wave",
+    y = "Mean Number of Non-Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top")
+```
+
+## 2.4 Kin Networks (All Distances)
+
+```{r mean-trajectory-kin-all, fig.height=7}
+traj_kin <- df %>%
+  filter(!is.na(mover_label), !is.na(agegroup_label)) %>%
+  pivot_longer(
+    cols = c(Kin_in_HH_N, Kin_within_60_N, Kin_GT_Hour_N),
+    names_to = "distance",
+    values_to = "count"
+  ) %>%
+  filter(!is.na(count)) %>%
+  mutate(
+    distance = factor(distance,
+                      levels = c("Kin_in_HH_N", "Kin_within_60_N", "Kin_GT_Hour_N"),
+                      labels = c("In Household", "Within 60 min", ">1 Hour"))
+  ) %>%
+  group_by(WAVE, mover_label, agegroup_label, distance) %>%
+  summarise(
+    mean = mean(count, na.rm = TRUE),
+    se = sd(count, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(traj_kin, aes(x = WAVE, y = mean, color = mover_label, fill = mover_label)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_grid(agegroup_label ~ distance, scales = "free_y") +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  scale_fill_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Mean Trajectories: Kin Networks by Distance",
+    subtitle = "Shaded bands = 95% CI",
+    x = "Wave",
+    y = "Mean Number of Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top")
+```
+
+## 2.5 Non-Kin Within 1 Hour (Total Local)
+
+Total non-kin ties within 1 hour (household + within 60 min combined).
+
+```{r mean-trajectory-nonkin-local-total, fig.height=6}
+traj_nonkin_local <- df %>%
+  filter(!is.na(mover_label), !is.na(agegroup_label)) %>%
+  mutate(nonkin_within_hour = Nonkin_in_HH_N + Nonkin_within_60_N) %>%
+  filter(!is.na(nonkin_within_hour)) %>%
+  group_by(WAVE, mover_label, agegroup_label) %>%
+  summarise(
+    mean = mean(nonkin_within_hour, na.rm = TRUE),
+    se = sd(nonkin_within_hour, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(traj_nonkin_local, aes(x = WAVE, y = mean, color = mover_label, fill = mover_label)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  scale_fill_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Mean Trajectories: Total Non-Kin Within 1 Hour",
+    subtitle = "Household + within 60 min combined; shaded bands = 95% CI",
+    x = "Wave",
+    y = "Mean Number of Non-Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top")
+```
+
+## 2.6 Kin Within 1 Hour (Total Local)
+
+Total kin ties within 1 hour (household + within 60 min combined).
+
+```{r mean-trajectory-kin-local-total, fig.height=6}
+traj_kin_local <- df %>%
+  filter(!is.na(mover_label), !is.na(agegroup_label)) %>%
+  mutate(kin_within_hour = Kin_in_HH_N + Kin_within_60_N) %>%
+  filter(!is.na(kin_within_hour)) %>%
+  group_by(WAVE, mover_label, agegroup_label) %>%
+  summarise(
+    mean = mean(kin_within_hour, na.rm = TRUE),
+    se = sd(kin_within_hour, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(traj_kin_local, aes(x = WAVE, y = mean, color = mover_label, fill = mover_label)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  scale_fill_manual(values = c("Non-Mover" = "#2166AC", "Mover" = "#B2182B")) +
+  labs(
+    title = "Mean Trajectories: Total Kin Within 1 Hour",
+    subtitle = "Household + within 60 min combined; shaded bands = 95% CI",
+    x = "Wave",
+    y = "Mean Number of Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top")
+```
+
+## 2.7 Event-Study: Network Change Around Move (Movers Only)
+
+These plots show network size **relative to the move timing**. The x-axis is centered on the move: -1 = wave before move, 0 = wave of move, +1 = wave after move. This lets us see the actual before/after change.
+
+**Note:** Only movers are included. We restrict to -1/0/+1 to maintain more consistent samples across time points. People who moved at Wave 3 contribute to -1 and 0; people who moved at Wave 2 contribute to -1, 0, and +1.
+
+```{r event-study-prep}
+# Create event-study dataset for movers
+df_event <- df %>%
+  filter(ever_moved == 1, !is.na(first_move_wave), !is.na(agegroup_label)) %>%
+  mutate(
+    wave_rel_move = WAVE - first_move_wave,
+    # Create total local ties
+    nonkin_within_hour = Nonkin_in_HH_N + Nonkin_within_60_N,
+    kin_within_hour = Kin_in_HH_N + Kin_within_60_N
+  ) %>%
+  filter(wave_rel_move >= -1 & wave_rel_move <= 1)  # Restrict to -1/0/+1 for consistent samples
+
+cat("Observations by wave relative to move:\n")
+table(df_event$wave_rel_move, df_event$agegroup_label)
+```
+
+```{r event-study-nonkin, fig.height=6}
+event_nonkin <- df_event %>%
+  filter(!is.na(nonkin_within_hour)) %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = mean(nonkin_within_hour, na.rm = TRUE),
+    se = sd(nonkin_within_hour, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(event_nonkin, aes(x = wave_rel_move, y = mean)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, fill = "#B2182B") +
+  geom_line(linewidth = 1.2, color = "#B2182B") +
+  geom_point(size = 3, color = "#B2182B") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Non-Kin Within 1 Hour (Movers Only)",
+    subtitle = "Network size relative to move timing; dashed line = move wave; shaded = 95% CI",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Non-Kin Ties"
+  ) +
+  theme(axis.text.x = element_text(size = 9))
+```
+
+```{r event-study-kin, fig.height=6}
+event_kin <- df_event %>%
+  filter(!is.na(kin_within_hour)) %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = mean(kin_within_hour, na.rm = TRUE),
+    se = sd(kin_within_hour, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(event_kin, aes(x = wave_rel_move, y = mean)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, fill = "#B2182B") +
+  geom_line(linewidth = 1.2, color = "#B2182B") +
+  geom_point(size = 3, color = "#B2182B") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Kin Within 1 Hour (Movers Only)",
+    subtitle = "Network size relative to move timing; dashed line = move wave; shaded = 95% CI",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Kin Ties"
+  ) +
+  theme(axis.text.x = element_text(size = 9))
+```
+
+```{r event-study-distant, fig.height=6}
+event_distant <- df_event %>%
+  filter(!is.na(Nonkin_GT_Hour_N), !is.na(Kin_GT_Hour_N)) %>%
+  pivot_longer(
+    cols = c(Kin_GT_Hour_N, Nonkin_GT_Hour_N),
+    names_to = "network",
+    values_to = "count"
+  ) %>%
+  mutate(network = factor(network,
+                          levels = c("Kin_GT_Hour_N", "Nonkin_GT_Hour_N"),
+                          labels = c("Kin", "Non-Kin"))) %>%
+  group_by(wave_rel_move, agegroup_label, network) %>%
+  summarise(
+    mean = mean(count, na.rm = TRUE),
+    se = sd(count, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(event_distant, aes(x = wave_rel_move, y = mean, color = network, fill = network)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Kin" = "#D73027", "Non-Kin" = "#4575B4")) +
+  scale_fill_manual(values = c("Kin" = "#D73027", "Non-Kin" = "#4575B4")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Distant Ties >1 Hour (Movers Only)",
+    subtitle = "Network size relative to move timing; dashed line = move wave; shaded = 95% CI",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size = 9))
+```
+
+```{r event-study-total, fig.height=6}
+# Total ties (kin + non-kin) by distance category
+event_total <- df_event %>%
+  mutate(
+    total_local = kin_within_hour + nonkin_within_hour,
+    total_distant = Kin_GT_Hour_N + Nonkin_GT_Hour_N
+  ) %>%
+  filter(!is.na(total_local), !is.na(total_distant)) %>%
+  pivot_longer(
+    cols = c(total_local, total_distant),
+    names_to = "distance",
+    values_to = "count"
+  ) %>%
+  mutate(distance = factor(distance,
+                           levels = c("total_local", "total_distant"),
+                           labels = c("Within 1 Hour", ">1 Hour (Distant)"))) %>%
+  group_by(wave_rel_move, agegroup_label, distance) %>%
+  summarise(
+    mean = mean(count, na.rm = TRUE),
+    se = sd(count, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(event_total, aes(x = wave_rel_move, y = mean, color = distance, fill = distance)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Within 1 Hour" = "#4575B4", ">1 Hour (Distant)" = "#D73027")) +
+  scale_fill_manual(values = c("Within 1 Hour" = "#4575B4", ">1 Hour (Distant)" = "#D73027")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Total Ties (Kin + Non-Kin Combined) by Distance",
+    subtitle = "Network size relative to move timing; dashed line = move wave; shaded = 95% CI",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Ties (Kin + Non-Kin)",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size = 9))
+```
+
+```{r event-study-total-overall, fig.height=6}
+# Grand total ties (all kin + all non-kin, all distances)
+event_grand <- df_event %>%
+  mutate(
+    total_ties = kin_within_hour + nonkin_within_hour + Kin_GT_Hour_N + Nonkin_GT_Hour_N
+  ) %>%
+  filter(!is.na(total_ties)) %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = mean(total_ties, na.rm = TRUE),
+    se = sd(total_ties, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(event_grand, aes(x = wave_rel_move, y = mean)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, fill = "#7B3294") +
+  geom_line(linewidth = 1.2, color = "#7B3294") +
+  geom_point(size = 3, color = "#7B3294") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Total Network Size (All Ties Combined)",
+    subtitle = "Kin + Non-Kin, Local + Distant; dashed line = move wave; shaded = 95% CI",
+    x = "Wave Relative to Move",
+    y = "Mean Total Number of Ties"
+  ) +
+  theme(axis.text.x = element_text(size = 9))
+```
+
+```{r event-study-kin-vs-nonkin, fig.height=6}
+# Total kin vs total non-kin (all distances combined)
+event_kin_nonkin <- df_event %>%
+  mutate(
+    total_kin = kin_within_hour + Kin_GT_Hour_N,
+    total_nonkin = nonkin_within_hour + Nonkin_GT_Hour_N
+  ) %>%
+  filter(!is.na(total_kin), !is.na(total_nonkin)) %>%
+  pivot_longer(
+    cols = c(total_kin, total_nonkin),
+    names_to = "network_type",
+    values_to = "count"
+  ) %>%
+  mutate(network_type = factor(network_type,
+                               levels = c("total_kin", "total_nonkin"),
+                               labels = c("All Kin", "All Non-Kin"))) %>%
+  group_by(wave_rel_move, agegroup_label, network_type) %>%
+  summarise(
+    mean = mean(count, na.rm = TRUE),
+    se = sd(count, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(event_kin_nonkin, aes(x = wave_rel_move, y = mean, color = network_type, fill = network_type)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("All Kin" = "#D73027", "All Non-Kin" = "#4575B4")) +
+  scale_fill_manual(values = c("All Kin" = "#D73027", "All Non-Kin" = "#4575B4")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Total Kin vs Total Non-Kin (All Distances)",
+    subtitle = "Local + distant combined for each tie type; dashed line = move wave; shaded = 95% CI",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size = 9))
+```
+
+## 2.8 Matched Counterfactual: Do movers differ from similar non-movers?
+
+These plots compare movers to non-movers **measured at the same calendar waves**. This controls for secular trends and provides a cleaner comparison of mover vs. non-mover trajectories.
+
+```{r event-study-movers-vs-nonmovers, fig.height=6}
+# Matched counterfactual: Compare movers to non-movers at same calendar waves
+# For each mover observation, we know their calendar wave (WAVE)
+# We compare to non-movers measured at those same calendar waves
+
+# Step 1: Get movers' non-kin by relative wave, tracking which calendar waves they came from
+mover_data <- df_event %>%
+  mutate(total_nonkin = nonkin_within_hour + Nonkin_GT_Hour_N) %>%
+  filter(!is.na(total_nonkin)) %>%
+  select(prim_key, WAVE, wave_rel_move, agegroup_label, total_nonkin)
+
+# Step 2: For each relative wave, get the distribution of calendar waves
+wave_mapping <- mover_data %>%
+  group_by(wave_rel_move, agegroup_label, WAVE) %>%
+  summarise(n_movers = n(), .groups = "drop")
+
+# Step 3: Get non-mover data at all waves
+nonmover_data <- df %>%
+  filter(ever_moved == 0, !is.na(agegroup_label)) %>%
+  mutate(total_nonkin = Nonkin_in_HH_N + Nonkin_within_60_N + Nonkin_GT_Hour_N) %>%
+  filter(!is.na(total_nonkin)) %>%
+  select(prim_key, WAVE, agegroup_label, total_nonkin)
+
+# Step 4: Calculate weighted non-mover means to match mover calendar wave distribution
+nonmover_by_wave <- nonmover_data %>%
+  group_by(WAVE, agegroup_label) %>%
+  summarise(
+    nonmover_mean = mean(total_nonkin, na.rm = TRUE),
+    nonmover_sd = sd(total_nonkin, na.rm = TRUE),
+    nonmover_n = n(),
+    .groups = "drop"
+  )
+
+# Step 5: Create matched non-mover counterfactual
+matched_nonmover <- wave_mapping %>%
+  left_join(nonmover_by_wave, by = c("WAVE", "agegroup_label")) %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    # Weighted mean based on how many movers came from each calendar wave
+    mean = weighted.mean(nonmover_mean, w = n_movers, na.rm = TRUE),
+    # Approximate pooled SE
+    n = sum(n_movers),
+    pooled_var = weighted.mean(nonmover_sd^2, w = n_movers, na.rm = TRUE),
+    se = sqrt(pooled_var / sum(nonmover_n)),
+    .groups = "drop"
+  ) %>%
+  mutate(group = "Non-Movers (matched)")
+
+# Step 6: Calculate mover means
+mover_summary <- mover_data %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = mean(total_nonkin, na.rm = TRUE),
+    se = sd(total_nonkin, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(group = "Movers")
+
+# Step 7: Combine and plot
+comparison_data <- bind_rows(
+  mover_summary %>% select(wave_rel_move, agegroup_label, mean, se, group),
+  matched_nonmover %>% select(wave_rel_move, agegroup_label, mean, se, group)
+)
+
+ggplot(comparison_data, aes(x = wave_rel_move, y = mean, color = group, fill = group)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Movers" = "#B2182B", "Non-Movers (matched)" = "#2166AC")) +
+  scale_fill_manual(values = c("Movers" = "#B2182B", "Non-Movers (matched)" = "#2166AC")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Non-Kin Ties - Movers vs Matched Non-Movers",
+    subtitle = "Non-movers matched to same calendar waves as movers; dashed line = move wave",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Non-Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size = 9))
+```
+
+### Within-Bay Movers (Local Moves)
+
+```{r event-study-within-bay, fig.height=6}
+# Within-Bay Movers vs Matched Non-Movers
+
+# Create event dataset for within-Bay movers only
+df_within_bay <- df %>%
+  filter(!is.na(agegroup_label)) %>%
+  group_by(prim_key) %>%
+  mutate(
+    ever_moved_within = max(Moved_in_Bay_w23, na.rm = TRUE),
+    first_within_move_wave = ifelse(any(Moved_in_Bay_w23 == 1, na.rm = TRUE),
+                                     min(WAVE[Moved_in_Bay_w23 == 1], na.rm = TRUE), NA)
+  ) %>%
+  ungroup()
+
+df_event_within <- df_within_bay %>%
+  filter(ever_moved_within == 1, !is.na(first_within_move_wave)) %>%
+  mutate(
+    wave_rel_move = WAVE - first_within_move_wave,
+    total_nonkin = Nonkin_in_HH_N + Nonkin_within_60_N + Nonkin_GT_Hour_N
+  ) %>%
+  filter(wave_rel_move >= -1 & wave_rel_move <= 1)
+
+# Mover data
+mover_within <- df_event_within %>%
+  filter(!is.na(total_nonkin)) %>%
+  select(prim_key, WAVE, wave_rel_move, agegroup_label, total_nonkin)
+
+# Wave mapping for within-Bay movers
+wave_mapping_within <- mover_within %>%
+  group_by(wave_rel_move, agegroup_label, WAVE) %>%
+  summarise(n_movers = n(), .groups = "drop")
+
+# Matched non-movers (same as before - people who never moved)
+matched_nonmover_within <- wave_mapping_within %>%
+  left_join(nonmover_by_wave, by = c("WAVE", "agegroup_label")) %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = weighted.mean(nonmover_mean, w = n_movers, na.rm = TRUE),
+    n = sum(n_movers),
+    pooled_var = weighted.mean(nonmover_sd^2, w = n_movers, na.rm = TRUE),
+    se = sqrt(pooled_var / sum(nonmover_n)),
+    .groups = "drop"
+  ) %>%
+  mutate(group = "Non-Movers (matched)")
+
+# Within-Bay mover summary
+mover_within_summary <- mover_within %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = mean(total_nonkin, na.rm = TRUE),
+    se = sd(total_nonkin, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(group = "Within-Bay Movers")
+
+# Combine and plot
+comparison_within <- bind_rows(
+  mover_within_summary %>% select(wave_rel_move, agegroup_label, mean, se, group),
+  matched_nonmover_within %>% select(wave_rel_move, agegroup_label, mean, se, group)
+)
+
+ggplot(comparison_within, aes(x = wave_rel_move, y = mean, color = group, fill = group)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Within-Bay Movers" = "#F4A582", "Non-Movers (matched)" = "#2166AC")) +
+  scale_fill_manual(values = c("Within-Bay Movers" = "#F4A582", "Non-Movers (matched)" = "#2166AC")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Non-Kin Ties - Within-Bay Movers vs Matched Non-Movers",
+    subtitle = "Local moves within Bay Area; non-movers matched to same calendar waves",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Non-Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size = 9))
+```
+
+### Out-of-Bay Movers (Regional Moves)
+
+```{r event-study-out-of-bay, fig.height=6}
+# Out-of-Bay Movers vs Matched Non-Movers
+
+# Create event dataset for out-of-Bay movers only
+df_out_bay <- df %>%
+  filter(!is.na(agegroup_label)) %>%
+  group_by(prim_key) %>%
+  mutate(
+    ever_moved_out = max(Moved_out_of_Bay_w23, na.rm = TRUE),
+    first_out_move_wave = ifelse(any(Moved_out_of_Bay_w23 == 1, na.rm = TRUE),
+                                  min(WAVE[Moved_out_of_Bay_w23 == 1], na.rm = TRUE), NA)
+  ) %>%
+  ungroup()
+
+df_event_out <- df_out_bay %>%
+  filter(ever_moved_out == 1, !is.na(first_out_move_wave)) %>%
+  mutate(
+    wave_rel_move = WAVE - first_out_move_wave,
+    total_nonkin = Nonkin_in_HH_N + Nonkin_within_60_N + Nonkin_GT_Hour_N
+  ) %>%
+  filter(wave_rel_move >= -1 & wave_rel_move <= 1)
+
+# Mover data
+mover_out <- df_event_out %>%
+  filter(!is.na(total_nonkin)) %>%
+  select(prim_key, WAVE, wave_rel_move, agegroup_label, total_nonkin)
+
+# Wave mapping for out-of-Bay movers
+wave_mapping_out <- mover_out %>%
+  group_by(wave_rel_move, agegroup_label, WAVE) %>%
+  summarise(n_movers = n(), .groups = "drop")
+
+# Matched non-movers
+matched_nonmover_out <- wave_mapping_out %>%
+  left_join(nonmover_by_wave, by = c("WAVE", "agegroup_label")) %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = weighted.mean(nonmover_mean, w = n_movers, na.rm = TRUE),
+    n = sum(n_movers),
+    pooled_var = weighted.mean(nonmover_sd^2, w = n_movers, na.rm = TRUE),
+    se = sqrt(pooled_var / sum(nonmover_n)),
+    .groups = "drop"
+  ) %>%
+  mutate(group = "Non-Movers (matched)")
+
+# Out-of-Bay mover summary
+mover_out_summary <- mover_out %>%
+  group_by(wave_rel_move, agegroup_label) %>%
+  summarise(
+    mean = mean(total_nonkin, na.rm = TRUE),
+    se = sd(total_nonkin, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(group = "Out-of-Bay Movers")
+
+# Combine and plot
+comparison_out <- bind_rows(
+  mover_out_summary %>% select(wave_rel_move, agegroup_label, mean, se, group),
+  matched_nonmover_out %>% select(wave_rel_move, agegroup_label, mean, se, group)
+)
+
+ggplot(comparison_out, aes(x = wave_rel_move, y = mean, color = group, fill = group)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~agegroup_label) +
+  scale_color_manual(values = c("Out-of-Bay Movers" = "#B2182B", "Non-Movers (matched)" = "#2166AC")) +
+  scale_fill_manual(values = c("Out-of-Bay Movers" = "#B2182B", "Non-Movers (matched)" = "#2166AC")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("-1\n(before)", "0\n(move)", "+1\n(after)")) +
+  labs(
+    title = "Event Study: Non-Kin Ties - Out-of-Bay Movers vs Matched Non-Movers",
+    subtitle = "Moves out of Bay Area; non-movers matched to same calendar waves",
+    x = "Wave Relative to Move",
+    y = "Mean Number of Non-Kin Ties",
+    color = "",
+    fill = ""
+  ) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size = 9))
+```

@@ -1,21 +1,917 @@
 ---
-title: "all_results"
-format: html
+title: "Analysis/Results"
+format: docx
 editor: visual
 ---
 
-## Descriptives
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(here)
+library(flextable)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(officer)
 
-### How many people move?
+set_flextable_defaults(
+  font.family = "Times New Roman",
+  font.size = 10,
+  padding.top = 1,
+  padding.bottom = 1
+)
 
-### Who moves within Bay?
+# Consistent plot theme
+theme_paper <- theme_minimal(base_family = "Times New Roman", base_size = 11) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+```
 
-### Who moves out of Bay?
+```{r helper-functions}
+# ===========================================================================
+# PARSER: Tab-delimited model output (Stata-style)
+# ===========================================================================
+parse_model_output <- function(path) {
+  lines <- readLines(path, encoding = "UTF-8")
+  headers <- trimws(strsplit(lines[1], "\t")[[1]])
+  headers[1] <- "Variable"
+  n_cols <- length(headers)
+  data_lines <- lines[-(1:3)]
+  parsed <- lapply(data_lines, function(l) {
+    parts <- trimws(strsplit(l, "\t")[[1]])
+    length(parts) <- n_cols
+    parts[is.na(parts)] <- ""
+    parts
+  })
+  df <- as.data.frame(do.call(rbind, parsed),
+                      stringsAsFactors = FALSE, check.names = FALSE)
+  names(df) <- headers
+  lns_idx <- which(df$Variable == "lns1_1_1")[1]
+  obs_idx <- tail(which(df$Variable == "Observations"), 1)
+  if (!is.na(lns_idx) && length(obs_idx) > 0) {
+    df <- df[c(1:(lns_idx - 1), obs_idx), ]
+  }
+  rownames(df) <- NULL
+  df
+}
 
-## Open-Ended Reasons for Moving
+# ===========================================================================
+# VARIABLE LABELS
+# ===========================================================================
+var_labels <- c(
+  "within_lag_Moved_Town"          = "  Prior Move",
+  "within_lag_Owns_Home"           = "  Home Ownership",
+  "within_lag_Full_Time"           = "  Full-Time Employment",
+  "within_lag_LT_BA"              = "  Less than BA",
+  "within_lag_New_Job"            = "  New Job",
+  "within_lag_New_School"         = "  New School",
+  "within_lag_Finan_Prob"         = "  Financial Problems",
+  "within_lag_Marr_Cohab"         = "  Married/Cohabiting",
+  "within_lag_Kin_within_60_N"    = "  Kin within 60 min",
+  "within_lag_Nonkin_within_60_N" = "  Non-kin within 60 min",
+  "within_lag_Nonkin_in_HH_N"    = "  Non-kin in Household",
+  "within_lag_Kin_in_HH_N"       = "  Kin in Household",
+  "within_lag_Kin_GT_Hour"        = "  Kin >60 min away",
+  "within_lag_Nonkin_GT_Hour"     = "  Non-kin >60 min away",
+  "within_lag_LEX_Birth"          = "  Birth of Child",
+  "within_lag_Plan_Move"          = "  Plan to Move (lagged)",
+  "between_web"        = "  Internet Use",
+  "between_LT_BA"     = "  Less than BA",
+  "between_Owns_home"  = "  Home Ownership",
+  "between_employed"   = "  Employment",
+  "between_Marr_Cohab" = "  Married/Cohabiting",
+  "between_age"        = "  Age",
+  "black_race" = "  Black",
+  "asian_race" = "  Asian",
+  "other_race" = "  Other Race",
+  "latino_eth" = "  Latino/a",
+  "gender"     = "  Female",
+  "Constant"     = "Constant",
+  "Observations" = "N"
+)
 
-## Open-Ended Ways to Make New Friends After Moving
+# ===========================================================================
+# REORDER & LABEL: Group within/between/demographics
+# ===========================================================================
+reorder_and_label <- function(df) {
+  n_cols <- ncol(df)
+  coef_idx <- which(df$Variable != "")
+  pairs <- list()
+  for (i in coef_idx) {
+    var <- df$Variable[i]
+    if (i + 1 <= nrow(df) && df$Variable[i + 1] == "") {
+      pairs[[length(pairs) + 1]] <- list(var = var, rows = df[c(i, i + 1), ])
+    } else {
+      pairs[[length(pairs) + 1]] <- list(var = var, rows = df[i, , drop = FALSE])
+    }
+  }
+  demo_names <- c("black_race", "asian_race", "other_race",
+                   "latino_eth", "gender", "female")
+  within_p  <- Filter(function(p) grepl("^within_", p$var), pairs)
+  between_p <- Filter(function(p) grepl("^between_", p$var) &
+                         p$var != "between_age", pairs)
+  demo_p    <- Filter(function(p) p$var %in% demo_names |
+                         p$var == "between_age", pairs)
+  const_p   <- Filter(function(p) p$var == "Constant", pairs)
+  obs_p     <- Filter(function(p) p$var == "Observations", pairs)
+  make_header <- function(label) {
+    row <- setNames(as.list(c(label, rep("", n_cols - 1))), names(df))
+    as.data.frame(row, stringsAsFactors = FALSE, check.names = FALSE)
+  }
+  parts <- list()
+  if (length(within_p) > 0) {
+    parts <- c(parts, list(make_header("Within-Person Effects (Lagged)")))
+    for (p in within_p) parts <- c(parts, list(p$rows))
+  }
+  if (length(between_p) > 0) {
+    parts <- c(parts, list(make_header("Between-Person Effects")))
+    for (p in between_p) parts <- c(parts, list(p$rows))
+  }
+  if (length(demo_p) > 0) {
+    parts <- c(parts, list(make_header("Demographics")))
+    for (p in demo_p) parts <- c(parts, list(p$rows))
+  }
+  for (p in const_p) parts <- c(parts, list(p$rows))
+  for (p in obs_p)   parts <- c(parts, list(p$rows))
+  result <- do.call(rbind, parts)
+  rownames(result) <- NULL
+  mask <- result$Variable %in% names(var_labels)
+  result$Variable[mask] <- var_labels[result$Variable[mask]]
+  result
+}
 
-## Mixed Effects: Within Bay Moves
+# ===========================================================================
+# MODEL TABLE: Academic-style flextable from parsed model output
+# ===========================================================================
+make_table <- function(df, caption, note,
+                       col_labels = NULL, span_header = NULL) {
+  section_names <- c("Within-Person Effects (Lagged)",
+                     "Between-Person Effects", "Demographics")
+  section_rows <- which(df$Variable %in% section_names)
+  n_row <- which(df$Variable == "N")
+  ft <- flextable(df)
+  if (!is.null(col_labels)) {
+    ft <- do.call(set_header_labels, c(list(x = ft), col_labels))
+  }
+  if (!is.null(span_header)) {
+    ft <- add_header_row(ft, values = span_header$values,
+                         colwidths = span_header$widths, top = TRUE)
+  }
+  ft <- theme_booktabs(ft)
+  ft <- bold(ft, i = section_rows, j = 1, part = "body")
+  if (length(n_row) > 0) {
+    ft <- hline(ft, i = n_row - 1, part = "body",
+                border = fp_border(width = 0.5))
+  }
+  ft <- fontsize(ft, size = 10, part = "all")
+  ft <- font(ft, fontname = "Times New Roman", part = "all")
+  ft <- align(ft, j = 1, align = "left", part = "body")
+  ft <- align(ft, j = -1, align = "center", part = "body")
+  ft <- align(ft, align = "center", part = "header")
+  ft <- bold(ft, part = "header")
+  ft <- set_caption(ft, caption = caption)
+  ft <- add_footer_lines(ft, values = note)
+  ft <- fontsize(ft, size = 9, part = "footer")
+  ft <- font(ft, fontname = "Times New Roman", part = "footer")
+  ft <- italic(ft, part = "footer")
+  ft <- autofit(ft)
+  ft
+}
 
-## Mixed Effects: Out of Bay Moves
+# ===========================================================================
+# SIMPLE TABLE: Flextable from any data frame
+# ===========================================================================
+make_simple_table <- function(df, caption, note = NULL,
+                              bold_last = FALSE, col_labels = NULL,
+                              span_header = NULL) {
+  ft <- flextable(df)
+  if (!is.null(col_labels)) {
+    ft <- do.call(set_header_labels, c(list(x = ft), col_labels))
+  }
+  if (!is.null(span_header)) {
+    ft <- add_header_row(ft, values = span_header$values,
+                         colwidths = span_header$widths, top = TRUE)
+  }
+  ft <- theme_booktabs(ft)
+  if (bold_last) ft <- bold(ft, i = nrow(df), part = "body")
+  ft <- fontsize(ft, size = 10, part = "all")
+  ft <- font(ft, fontname = "Times New Roman", part = "all")
+  ft <- align(ft, j = 1, align = "left", part = "body")
+  ft <- align(ft, j = -1, align = "center", part = "body")
+  ft <- align(ft, align = "center", part = "header")
+  ft <- bold(ft, part = "header")
+  ft <- set_caption(ft, caption = caption)
+  if (!is.null(note)) {
+    ft <- add_footer_lines(ft, values = note)
+    ft <- fontsize(ft, size = 9, part = "footer")
+    ft <- font(ft, fontname = "Times New Roman", part = "footer")
+    ft <- italic(ft, part = "footer")
+  }
+  ft <- autofit(ft)
+  ft
+}
+```
+
+```{r load-data-for-plots}
+# Load analysis dataset for network consequence plots
+data_path <- here("data", "out", "R_DF.rds")
+if (!file.exists(data_path)) data_path <- here("data", "R_DF.rds")
+data_available <- file.exists(data_path)
+
+if (data_available) {
+  df_raw <- readRDS(data_path)
+
+  # Person-level mover indicators
+  person_summary <- df_raw %>%
+    group_by(prim_key) %>%
+    summarise(
+      ever_moved     = max(Moved_w23, na.rm = TRUE),
+      ever_moved_out = max(Moved_out_of_Bay_w23, na.rm = TRUE),
+      ever_moved_in  = max(Moved_in_Bay_w23, na.rm = TRUE),
+      first_move_wave = ifelse(any(Moved_w23 == 1, na.rm = TRUE),
+                                min(WAVE[Moved_w23 == 1], na.rm = TRUE), NA),
+      .groups = "drop"
+    )
+
+  df_plot <- df_raw %>%
+    left_join(person_summary, by = "prim_key") %>%
+    mutate(
+      wave_rel_move = ifelse(!is.na(first_move_wave),
+                              WAVE - first_move_wave, NA),
+      agegroup_label = ifelse(agegroup == 0,
+                               "Young Adults (21-30)", "Older Adults (50-70)"),
+      nonkin_local = Nonkin_in_HH_N + Nonkin_within_60_N,
+      kin_local    = Kin_in_HH_N + Kin_within_60_N,
+      total_nonkin = nonkin_local + Nonkin_GT_Hour_N,
+      total_kin    = kin_local + Kin_GT_Hour_N
+    )
+}
+```
+
+# Results
+
+## Who Moves?
+
+### Who Expects to Move?
+
+Table 1 presents cross-sectional predictors of planning to move. Among the network variables, having fewer local kin and non-kin ties is associated with a higher likelihood of planning to move, while having non-kin friends more than an hour away is positively predictive of planning intentions, consistent with the idea that distant connections may pull people toward relocation. Homeownership is the strongest single predictor of lower planning intentions, and the same stabilizing pattern holds for full-time employment, having a BA or higher, and being married or cohabiting, all factors that appear to ground people in place. Age is also strongly associated with lower planning: the older the respondent, the less likely they are to report plans to move.
+
+```{r tbl-plan-lpm, eval=data_available}
+library(sandwich)
+library(lmtest)
+
+# ---------------------------------------------------------------------------
+# Cross-sectional LPM: Plan_to_Move ~ all key IVs
+# Three models: whole sample, young only, old only
+# ---------------------------------------------------------------------------
+predictors <- c(
+  "Kin_within_60_N", "Nonkin_within_60_N",
+  "Kin_in_HH_N", "Nonkin_in_HH_N",
+  "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+  "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+  "black_race", "asian_race", "other_race", "latino_eth", "female", "age"
+)
+
+formula_str <- paste("Plan_to_Move ~", paste(predictors, collapse = " + "), "+ factor(WAVE)")
+all_data <- df_raw[complete.cases(df_raw[, c("Plan_to_Move", predictors, "prim_key", "agegroup", "WAVE")]), ]
+
+# Run three models
+run_lpm <- function(data) {
+  fit <- lm(as.formula(formula_str), data = data)
+  cl_se <- sqrt(diag(vcovCL(fit, cluster = data$prim_key)))
+  coefs <- coef(fit)
+  t_stats <- coefs / cl_se
+  p_vals <- 2 * pt(abs(t_stats), df = fit$df.residual, lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***",
+           ifelse(p_vals < 0.05, "**",
+           ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = cl_se, stars = stars,
+       n = nobs(fit), n_clusters = n_distinct(data$prim_key),
+       r2 = summary(fit)$r.squared)
+}
+
+m_all   <- run_lpm(all_data)
+m_young <- run_lpm(all_data %>% filter(agegroup == 0))
+m_old   <- run_lpm(all_data %>% filter(agegroup == 1))
+
+# Format one model column
+fmt <- function(m, var) {
+  if (var %in% names(m$coefs)) {
+    sprintf("%.3f%s (%.3f)", m$coefs[var], m$stars[var], m$se[var])
+  } else { "" }
+}
+
+# Variable labels
+cs_labels <- c(
+  "(Intercept)"        = "Constant",
+  "Kin_within_60_N"    = "Kin within 60 min",
+  "Nonkin_within_60_N" = "Non-kin within 60 min",
+  "Kin_in_HH_N"        = "Kin in Household",
+  "Nonkin_in_HH_N"     = "Non-kin in Household",
+  "Kin_GT_Hour_N"      = "Kin >60 min away",
+  "Nonkin_GT_Hour_N"   = "Non-kin >60 min away",
+  "Owns_home"          = "Home Ownership",
+  "Full_Time"          = "Full-Time Employment",
+  "BA_or_greater"      = "BA or Greater",
+  "Marr_Cohab"         = "Married/Cohabiting",
+  "LE_NewJob"          = "New Job",
+  "LE_NewSchool"       = "New School",
+  "LEX_Birth"          = "Birth of Child",
+  "LE_FinanProb"       = "Financial Problems",
+  "black_race"         = "Black",
+  "asian_race"         = "Asian",
+  "other_race"         = "Other Race",
+  "latino_eth"         = "Latino/a",
+  "female"             = "Female",
+  "age"                = "Age",
+  "factor(WAVE)2"      = "Wave 2",
+  "factor(WAVE)3"      = "Wave 3"
+)
+
+# Group ordering
+network <- c("Kin_within_60_N", "Nonkin_within_60_N", "Kin_in_HH_N",
+             "Nonkin_in_HH_N", "Kin_GT_Hour_N", "Nonkin_GT_Hour_N")
+ses <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab")
+events <- c("LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb")
+demo <- c("black_race", "asian_race", "other_race", "latino_eth", "female", "age")
+ordered_vars <- c(network, ses, events, demo)
+
+sections <- list(
+  list(before = network[1],  label = "Network Variables"),
+  list(before = ses[1],      label = "Socioeconomic Status"),
+  list(before = events[1],   label = "Life Events"),
+  list(before = demo[1],          label = "Demographics")
+)
+
+rows <- list()
+for (var in ordered_vars) {
+  for (s in sections) {
+    if (var == s$before) {
+      rows[[length(rows) + 1]] <- data.frame(
+        Variable = s$label, All = "", Young = "", Old = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- ifelse(var %in% names(cs_labels), cs_labels[var], var)
+  if (var != "(Intercept)") label <- paste0("  ", label)
+  rows[[length(rows) + 1]] <- data.frame(
+    Variable = label,
+    All   = fmt(m_all, var),
+    Young = fmt(m_young, var),
+    Old   = fmt(m_old, var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows[[length(rows) + 1]] <- data.frame(
+  Variable = "N (person-waves)",
+  All = as.character(m_all$n), Young = as.character(m_young$n),
+  Old = as.character(m_old$n),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows[[length(rows) + 1]] <- data.frame(
+  Variable = "N (individuals)",
+  All = as.character(m_all$n_clusters), Young = as.character(m_young$n_clusters),
+  Old = as.character(m_old$n_clusters),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows[[length(rows) + 1]] <- data.frame(
+  Variable = "R-squared",
+  All = sprintf("%.3f", m_all$r2), Young = sprintf("%.3f", m_young$r2),
+  Old = sprintf("%.3f", m_old$r2),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_df <- do.call(rbind, rows)
+
+section_labels <- c("Network Variables", "Socioeconomic Status",
+                     "Life Events", "Demographics")
+section_rows <- which(result_df$Variable %in% section_labels)
+n_row <- which(result_df$Variable == "N (person-waves)")
+
+ft <- flextable(result_df)
+ft <- set_header_labels(ft, Variable = "", All = "(1) Whole Sample",
+                        Young = "(2) Young Adults", Old = "(3) Older Adults")
+ft <- theme_booktabs(ft)
+ft <- bold(ft, i = section_rows, j = 1, part = "body")
+if (length(n_row) > 0) {
+  ft <- hline(ft, i = n_row - 1, part = "body", border = fp_border(width = 0.5))
+}
+ft <- fontsize(ft, size = 9, part = "all")
+ft <- font(ft, fontname = "Times New Roman", part = "all")
+ft <- align(ft, j = 1, align = "left", part = "body")
+ft <- align(ft, j = -1, align = "center", part = "body")
+ft <- align(ft, align = "center", part = "header")
+ft <- bold(ft, part = "header")
+ft <- set_caption(ft, caption = "Table 1. Cross-Sectional Predictors of Planning to Move (DV: Plan_to_Move = 1, Linear Probability Model)")
+ft <- add_footer_lines(ft, values = paste(
+  "Linear probability model with wave fixed effects. Observations pooled across all waves;",
+  "cluster-robust standard errors (by individual) account for repeated observations.",
+  "Predictors and outcome measured at the same wave. Wave 1 is the reference category.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft <- fontsize(ft, size = 9, part = "footer")
+ft <- font(ft, fontname = "Times New Roman", part = "footer")
+ft <- italic(ft, part = "footer")
+ft <- autofit(ft)
+ft
+```
+
+### Who Actually Moves and Where?
+
+Table 2 presents three models for young adults, each with a distinct comparison group: any move vs. stayers, out-of-Bay movers vs. everyone who remained in the region, and within-Bay movers vs. stayers only (excluding out-of-Bay movers).
+
+Among the network variables, having more kin in the household is associated with a lower probability of any move, consistent with the idea that co-resident family anchors people in place. The opposite pattern holds for distant kin: having family more than an hour away is associated with higher out-of-Bay mobility, but not with local moves, suggesting that distant family may serve as a pull factor for regional relocation. Consistent with the planning models, homeownership is associated with lower mobility, but only for moves out of the region; within-Bay moves are not statistically more or less likely among homeowners. Being married or cohabiting, which was associated with lower planning intentions, is here associated with higher mobility, but only for within-Bay moves, possibly reflecting couples purchasing homes or relocating within the region for family reasons. Among life events, new school enrollment is statistically significant but likely reflects simultaneous moves for education rather than an independent predictor. A new baby is associated with out-of-Bay moves specifically, indicating that the transition to parenthood may prompt regional relocation, though it is difficult to say whether this reflects Bay Area-specific housing pressures or a broader pattern among movers. Among demographics, age remains the strongest predictor of mobility.
+
+```{r tbl-mobility-lpm, eval=data_available}
+# ---------------------------------------------------------------------------
+# Cross-sectional LPM: Mobility outcomes, young adults only
+# 3 models: Any Move, Out-of-Bay, Within-Bay
+# ---------------------------------------------------------------------------
+young_data <- df_raw %>% filter(agegroup == 0)
+
+base_preds <- c(
+  "Kin_within_60_N", "Nonkin_within_60_N",
+  "Kin_in_HH_N", "Nonkin_in_HH_N",
+  "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+  "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+  "black_race", "asian_race", "other_race", "latino_eth", "female", "age"
+)
+
+# Model 1: Any Move (full young sample)
+any_f <- paste("Moved_w23 ~", paste(base_preds, collapse = " + "), "+ factor(WAVE)")
+any_data <- young_data[complete.cases(young_data[, c("Moved_w23", base_preds, "prim_key", "WAVE")]), ]
+fit_any <- lm(as.formula(any_f), data = any_data)
+se_any <- sqrt(diag(vcovCL(fit_any, cluster = any_data$prim_key)))
+
+# Model 2: Out-of-Bay vs. all who remained in Bay (stayers + local movers)
+out_f <- paste("Moved_out_of_Bay_w23 ~", paste(base_preds, collapse = " + "), "+ factor(WAVE)")
+out_data <- young_data[complete.cases(young_data[, c("Moved_out_of_Bay_w23", base_preds, "prim_key", "WAVE")]), ]
+fit_out <- lm(as.formula(out_f), data = out_data)
+se_out <- sqrt(diag(vcovCL(fit_out, cluster = out_data$prim_key)))
+
+# Model 3: Within-Bay vs. stayers (excluding out-of-Bay movers)
+young_in <- young_data %>%
+  filter(Moved_out_of_Bay_w23 != 1 | is.na(Moved_out_of_Bay_w23))
+in_f <- paste("Moved_in_Bay_w23 ~", paste(base_preds, collapse = " + "), "+ factor(WAVE)")
+in_data <- young_in[complete.cases(young_in[, c("Moved_in_Bay_w23", base_preds, "prim_key", "WAVE")]), ]
+fit_in <- lm(as.formula(in_f), data = in_data)
+se_in <- sqrt(diag(vcovCL(fit_in, cluster = in_data$prim_key)))
+
+# Format cell
+fmt_cell <- function(fit, se, var) {
+  if (!(var %in% names(coef(fit)))) return("")
+  b <- coef(fit)[var]; s <- se[var]
+  p <- 2 * pt(abs(b / s), df = fit$df.residual, lower.tail = FALSE)
+  star <- ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.10, "*", "")))
+  sprintf("%.3f%s (%.3f)", b, star, s)
+}
+
+# Build table
+network <- c("Kin_within_60_N", "Nonkin_within_60_N", "Kin_in_HH_N",
+             "Nonkin_in_HH_N", "Kin_GT_Hour_N", "Nonkin_GT_Hour_N")
+ses <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab")
+events <- c("LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb")
+demo <- c("black_race", "asian_race", "other_race", "latino_eth", "female", "age")
+ordered_vars2 <- c(network, ses, events, demo)
+
+sections2 <- list(
+  list(before = network[1], label = "Network Variables"),
+  list(before = ses[1],     label = "Socioeconomic Status"),
+  list(before = events[1],  label = "Life Events"),
+  list(before = demo[1],    label = "Demographics")
+)
+
+rows2 <- list()
+for (var in ordered_vars2) {
+  for (s in sections2) {
+    if (var == s$before) {
+      rows2[[length(rows2) + 1]] <- data.frame(
+        Variable = s$label, Any = "", Out = "", In = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- ifelse(var %in% names(cs_labels), cs_labels[var], var)
+  label <- paste0("  ", label)
+  rows2[[length(rows2) + 1]] <- data.frame(
+    Variable = label,
+    Any = fmt_cell(fit_any, se_any, var),
+    Out = fmt_cell(fit_out, se_out, var),
+    In  = fmt_cell(fit_in, se_in, var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+rows2[[length(rows2) + 1]] <- data.frame(Variable = "N (person-waves)",
+  Any = as.character(nobs(fit_any)),
+  Out = as.character(nobs(fit_out)),
+  In  = as.character(nobs(fit_in)),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows2[[length(rows2) + 1]] <- data.frame(Variable = "N (individuals)",
+  Any = as.character(n_distinct(any_data$prim_key)),
+  Out = as.character(n_distinct(out_data$prim_key)),
+  In  = as.character(n_distinct(in_data$prim_key)),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows2[[length(rows2) + 1]] <- data.frame(Variable = "R-squared",
+  Any = sprintf("%.3f", summary(fit_any)$r.squared),
+  Out = sprintf("%.3f", summary(fit_out)$r.squared),
+  In  = sprintf("%.3f", summary(fit_in)$r.squared),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_df2 <- do.call(rbind, rows2)
+
+section_rows2 <- which(result_df2$Variable %in%
+  c("Network Variables", "Socioeconomic Status", "Life Events", "Demographics"))
+n_row2 <- which(result_df2$Variable == "N")
+
+ft2 <- flextable(result_df2)
+ft2 <- set_header_labels(ft2, Variable = "",
+  Any = "(1) Any Move", Out = "(2) Out of Bay", In = "(3) Within Bay")
+ft2 <- theme_booktabs(ft2)
+ft2 <- bold(ft2, i = section_rows2, j = 1, part = "body")
+if (length(n_row2) > 0) {
+  ft2 <- hline(ft2, i = n_row2 - 1, part = "body", border = fp_border(width = 0.5))
+}
+ft2 <- fontsize(ft2, size = 9, part = "all")
+ft2 <- font(ft2, fontname = "Times New Roman", part = "all")
+ft2 <- align(ft2, j = 1, align = "left", part = "body")
+ft2 <- align(ft2, j = -1, align = "center", part = "body")
+ft2 <- align(ft2, align = "center", part = "header")
+ft2 <- bold(ft2, part = "header")
+ft2 <- set_caption(ft2, caption = "Table 2. Cross-Sectional Predictors of Residential Mobility, Young Adults (Linear Probability Model)")
+ft2 <- add_footer_lines(ft2, values = paste(
+  "Linear probability model with wave fixed effects, young adults (ages 21-30) only.",
+  "Cluster-robust standard errors (by individual) in parentheses.",
+  "Model (1): any move vs. no move. Model (2): out-of-Bay vs. all who remained in region",
+  "(stayers + local movers). Model (3): within-Bay movers vs. stayers (out-of-Bay movers excluded).",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft2 <- fontsize(ft2, size = 9, part = "footer")
+ft2 <- font(ft2, fontname = "Times New Roman", part = "footer")
+ft2 <- italic(ft2, part = "footer")
+ft2 <- autofit(ft2)
+ft2
+```
+
+#### Preliminary Conclusions
+
+-   Homeownership consistently discourages both planning and actual moves; marriage/cohabitation discourages planning but is associated with higher within-Bay mobility, possibly reflecting couples relocating locally
+-   Local kin ties (within 60 min) are associated with lower planning and lower out-of-Bay mobility; household kin reduce actual moves but not planning intentions
+-   Distant non-kin (\>60 min) are associated with both higher planning and higher out-of-Bay mobility, consistent with a pull effect from geographically dispersed connections
+-   Network geography matters most for regional moves; within-Bay moves show sparser network effects and appear driven more by housing, partnership, and life events
+-   Having a new baby is associated specifically with out-of-Bay moves, suggesting parenthood may prompt regional relocation
+-   Age is the strongest demographic predictor across all models: older respondents are less likely to plan or to move
+
+## Why People Move, in Their Own Words
+
+### Reasons
+
+Career is by far the dominant reason for out-of-Bay moves, cited in 71% of cases, compared to only 20% of within-Bay moves. Men and women both name career as their top reason for moving, though men are slightly more likely to do so (37% versus 34%). Women, by contrast, are more likely to cite family and friends as a reason for relocating, and are also more likely to report conflict or being forced to move (16% of women's moves versus 8% of men's, though the sample is small). Within-Bay moves have no single standout reason comparable to career for out-of-Bay movers; instead, reasons are more evenly distributed across categories.
+
+One distinction between regional and local moves that deserves attention is the role of instability. Conflict and forced moves are more commonly cited for within-Bay relocations, suggesting that local moves are more often reactive rather than aspirational. Financial reasons follow a similar pattern, appearing more frequently among within-Bay movers. Together, these patterns suggest that within-Bay mobility is more often driven by housing and interpersonal instability, while out-of-Bay moves are more often driven by opportunity.
+
+The move reasons data also shed light on findings from the regression models. Among movers who reported getting a new job, only 44% cited the job as the reason for moving; many instead cited being with a partner, suggesting that the new job may accompany or support a move rather than cause it. Movers with above-average numbers of distant kin are, interestingly, less likely to say they moved to be near family, even though distant kin are a strong predictor of out-of-Bay mobility in the regression models. In fact, those with fewer distant family members are more likely to cite family as a reason. Instead, movers with many distant kin most commonly cite career, which could imply that family connections facilitate career-related moves, for example through family businesses or professional networks in other locations. The same pattern holds for distant non-kin: movers with more distant friends are more likely to cite career than those with fewer, reinforcing the interpretation that dispersed networks enable opportunity-driven relocation rather than serving as a direct pull factor (see Appendix Table S14 for the full demographic breakdown).
+
+```{r tbl-move-reasons-by-distance, eval=data_available}
+# Build reasons table from data, stratified by move distance
+# Collapse individual a19i dummies into combined categories
+# Young adults only in main text; all-ages version in appendix
+movers <- df_raw %>%
+  filter(Moved_w23 == 1, !is.na(a19i_response), agegroup == 0) %>%
+  mutate(
+    reason_career      = pmax(a19i_own_job_school, a19i_partner_job_school, na.rm = TRUE),
+    reason_partner     = pmax(a19i_partner_spouse, a19i_relationship_end, na.rm = TRUE),
+    reason_financial   = a19i_financial,
+    reason_housing     = a19i_housing,
+    reason_environment = a19i_new_environment,
+    reason_family      = pmax(a19i_family_support, a19i_meet_friends, na.rm = TRUE),
+    reason_conflict    = pmax(a19i_conflicts, a19i_forced, na.rm = TRUE),
+    reason_other       = pmax(a19i_other, a19i_not_clear, na.rm = TRUE),
+    move_type = case_when(
+      Moved_out_of_Bay_w23 == 1 ~ "Out of Bay",
+      Moved_in_Bay_w23 == 1     ~ "Within Bay",
+      TRUE                      ~ "Other"
+    )
+  ) %>%
+  filter(move_type %in% c("Out of Bay", "Within Bay"))
+
+reason_vars <- c("reason_career", "reason_partner", "reason_financial",
+                  "reason_housing", "reason_environment", "reason_family",
+                  "reason_conflict", "reason_other")
+reason_labels <- c("Career (Own/Partner)", "Partner/Relationship", "Financial",
+                    "Housing", "New Environment", "Family/Friends",
+                    "Conflict/Forced", "Other/Unclear")
+
+# Compute N and % by move type
+build_col <- function(data, label) {
+  n_total <- nrow(data)
+  counts <- sapply(reason_vars, function(v) sum(data[[v]], na.rm = TRUE))
+  pcts <- sprintf("%.1f%%", 100 * counts / n_total)
+  vals <- paste0(counts, " (", pcts, ")")
+  c(vals, as.character(n_total))
+}
+
+out_movers <- movers %>% filter(move_type == "Out of Bay")
+in_movers  <- movers %>% filter(move_type == "Within Bay")
+
+tbl_reasons <- data.frame(
+  Reason = c(reason_labels, "N (movers)"),
+  Out    = build_col(out_movers),
+  Within = build_col(in_movers),
+  Total  = build_col(movers),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  tbl_reasons,
+  caption = "Table 3. Self-Reported Reasons for Moving by Move Distance (Young Adults)",
+  note = paste(
+    "Young adults (ages 21-30) only. Older adult results in Appendix.",
+    "Reasons coded from open-ended responses (a19i: 'Why did you move?').",
+    "Categories are not mutually exclusive; respondents could cite multiple reasons.",
+    "Percentages are of movers within each move-type column.",
+    "Observation-level: each person-wave with a move contributes one set of reasons."
+  ),
+  bold_last = TRUE,
+  col_labels = list(Reason = "", Out = "Out of Bay",
+                    Within = "Within Bay", Total = "Total")
+)
+```
+
+### Preliminary Conclusions
+
+In summary, out-of-Bay moves are overwhelmingly framed as career-driven, while within-Bay moves lack a single dominant motive and are more often associated with instability, including conflict, forced relocation, and financial pressure. Gender differences emerge in the role of family and conflict as drivers of local mobility, with women more likely to cite both. Perhaps most importantly, the stated reasons often complicate the interpretation of regression coefficients. A significant coefficient on new job in the mobility models might naturally lead to the conclusion that people move for their new jobs, but the self-reported reasons tell a different story: fewer than half of movers who got a new job actually cite the job as their reason for moving, with many instead pointing to partnership or other factors. Similarly, having distant kin strongly predicts out-of-Bay mobility in the regression, yet movers with the most distant family are less likely to cite family as a reason, instead citing career. This suggests that dispersed networks may facilitate opportunity-driven moves rather than functioning as a direct pull factor, and that regression-based predictors and subjective motivations can point in different directions.
+
+## The Network Consequences of Moving
+
+### What happens right after a move?
+
+To estimate the network consequences of moving, we use individual fixed effects models with each network variable as the dependent variable and move indicators as predictors. Because respondents were asked whether they moved *since the last interview* before their current network was measured, the move necessarily precedes the network measurement within each wave. This establishes temporal ordering: the coefficients capture the within-person change in post-move networks relative to waves when the respondent did not move. All time-invariant individual characteristics (personality, baseline sociability, stable preferences) are absorbed by the fixed effect.
+
+-   "Moving within the Bay Area is associated with having 0.522 more local non-kin ties in the post-move period, relative to the same person's non-move waves."
+
+-   Moving out of the bay leads to more family/friends greater than 60-minutes away, suggesting that young people are perhaps more often moving away from family and friends
+
+-   Table 3 shows that moving within the Bay Area is associated with having more local non-kin ties in the post-move period, relative to the same person's non-move waves. Moving out of the Bay, by contrast, is associated with more family and friends at distances greater than 60 minutes, suggesting that young adults who leave the region are often moving away from their existing local networks. We tested whether these network consequences differ by stated move reason (career, partner, financial, housing) using interaction terms within the same FE framework; none of the interactions were significant, indicating that the network disruption of moving is similar regardless of why the person moved (Appendix Table S22).
+
+```{r tbl-network-consequences-fe, eval=data_available}
+library(plm)
+
+# FE models: network DVs as columns, move + all controls as rows
+# Shows full model output for each network outcome
+young_fe <- df_raw %>% filter(agegroup == 0)
+
+net_outcomes <- c("Nonkin_within_60_N", "Kin_within_60_N",
+                  "Nonkin_GT_Hour_N", "Kin_GT_Hour_N")
+net_col_labels <- c("Local Non-Kin", "Local Kin", "Distant Non-Kin", "Distant Kin")
+
+all_predictors <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23",
+                     "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                     "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+                     "Plan_to_Move")
+
+pred_labels <- c(
+  "Moved_out_of_Bay_w23" = "Moved Out of Bay",
+  "Moved_in_Bay_w23"     = "Moved Within Bay",
+  "Owns_home"            = "Home Ownership",
+  "Full_Time"            = "Full-Time Employment",
+  "BA_or_greater"        = "BA or Greater",
+  "Marr_Cohab"           = "Married/Cohabiting",
+  "LE_NewJob"            = "New Job",
+  "LE_NewSchool"         = "New School",
+  "LEX_Birth"            = "Birth of Child",
+  "LE_FinanProb"         = "Financial Problems",
+  "Plan_to_Move"         = "Plan to Move"
+)
+
+# Run full FE model, return all coefficients
+run_full_fe <- function(outcome, predictors, data) {
+  f <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+  all_vars <- c(outcome, predictors, "prim_key", "WAVE")
+  d <- data[complete.cases(data[, all_vars]), ]
+  pdata <- tryCatch(pdata.frame(d, index = c("prim_key", "WAVE"), drop.index = FALSE),
+                    error = function(e) NULL)
+  if (is.null(pdata)) return(NULL)
+  fit <- tryCatch(plm(f, data = pdata, model = "within", effect = "individual"),
+                  error = function(e) NULL)
+  if (is.null(fit)) return(NULL)
+  rob_se <- sqrt(diag(vcovHC(fit, type = "HC1")))
+  coefs <- coef(fit)
+  p_vals <- 2 * pt(abs(coefs / rob_se), df = df.residual(fit), lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***", ifelse(p_vals < 0.05, "**", ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = rob_se, stars = stars,
+       n = nrow(fit$model), n_ind = length(unique(d$prim_key)))
+}
+
+fmt_full <- function(model, var) {
+  if (is.null(model) || !(var %in% names(model$coefs))) return("")
+  sprintf("%.3f%s (%.3f)", model$coefs[var], model$stars[var], model$se[var])
+}
+
+# Run 4 models
+models <- lapply(net_outcomes, function(dv) run_full_fe(dv, all_predictors, young_fe))
+
+# Build table
+move_vars <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23")
+control_vars <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                   "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move")
+sections_fe <- list(
+  list(before = move_vars[1], label = "Move Indicators"),
+  list(before = control_vars[1], label = "Controls")
+)
+ordered_preds <- c(move_vars, control_vars)
+
+rows_fe <- list()
+for (var in ordered_preds) {
+  for (s in sections_fe) {
+    if (var == s$before) {
+      rows_fe[[length(rows_fe) + 1]] <- data.frame(
+        Variable = s$label, C1 = "", C2 = "", C3 = "", C4 = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- paste0("  ", pred_labels[var])
+  rows_fe[[length(rows_fe) + 1]] <- data.frame(
+    Variable = label,
+    C1 = fmt_full(models[[1]], var), C2 = fmt_full(models[[2]], var),
+    C3 = fmt_full(models[[3]], var), C4 = fmt_full(models[[4]], var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_fe[[length(rows_fe) + 1]] <- data.frame(Variable = "N (person-waves)",
+  C1 = as.character(models[[1]]$n), C2 = as.character(models[[2]]$n),
+  C3 = as.character(models[[3]]$n), C4 = as.character(models[[4]]$n),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows_fe[[length(rows_fe) + 1]] <- data.frame(Variable = "N (individuals)",
+  C1 = as.character(models[[1]]$n_ind), C2 = as.character(models[[2]]$n_ind),
+  C3 = as.character(models[[3]]$n_ind), C4 = as.character(models[[4]]$n_ind),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_fe <- do.call(rbind, rows_fe)
+sec_fe <- which(result_fe$Variable %in% c("Move Indicators", "Controls"))
+n_fe <- which(result_fe$Variable == "N (person-waves)")
+
+ft_fe <- flextable(result_fe)
+ft_fe <- set_header_labels(ft_fe, Variable = "",
+  C1 = "(1)", C2 = "(2)", C3 = "(3)", C4 = "(4)")
+ft_fe <- add_header_row(ft_fe,
+  values = c("", "Local", "Distant"),
+  colwidths = c(1, 2, 2), top = TRUE)
+ft_fe <- add_header_row(ft_fe,
+  values = c("", net_col_labels),
+  colwidths = c(1, 1, 1, 1, 1), top = FALSE)
+ft_fe <- theme_booktabs(ft_fe)
+ft_fe <- bold(ft_fe, i = sec_fe, j = 1, part = "body")
+if (length(n_fe) > 0) ft_fe <- hline(ft_fe, i = n_fe - 1, part = "body",
+                                       border = fp_border(width = 0.5))
+ft_fe <- fontsize(ft_fe, size = 9, part = "all")
+ft_fe <- font(ft_fe, fontname = "Times New Roman", part = "all")
+ft_fe <- align(ft_fe, j = 1, align = "left", part = "body")
+ft_fe <- align(ft_fe, j = -1, align = "center", part = "body")
+ft_fe <- align(ft_fe, align = "center", part = "header")
+ft_fe <- bold(ft_fe, part = "header")
+ft_fe <- set_caption(ft_fe, caption = "Table 3. Within-Person Network Changes Associated with Moving (Fixed Effects, Young Adults)")
+ft_fe <- add_footer_lines(ft_fe, values = paste(
+  "Individual fixed effects models (plm, within estimator). Young adults only.",
+  "Each column is a separate model with the network variable as the DV.",
+  "All predictors are time-varying; time-invariant characteristics absorbed by the fixed effect.",
+  "HC1 robust SEs in parentheses.",
+  "Caveat: These estimates capture net changes in tie counts around moves but cannot",
+  "distinguish network disruption from destination selection.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_fe <- fontsize(ft_fe, size = 9, part = "footer")
+ft_fe <- font(ft_fe, fontname = "Times New Roman", part = "footer")
+ft_fe <- italic(ft_fe, part = "footer")
+ft_fe <- autofit(ft_fe)
+ft_fe
+```
+
+Table 3 shows that moving within the Bay Area is associated with having 0.52 more local non-kin ties in the post-move period relative to the same person's non-move waves, suggesting that local moves may place young adults in contexts where they accumulate new friendships. Moving out of the Bay Area tells a different story: out-of-Bay movers show significantly more kin and non-kin ties at distances greater than 60 minutes, consistent with the interpretation that young people who leave the region are moving away from their existing local family and friends, who then become distant ties.
+
+We tested whether these network consequences differ by stated move reason (career, partner, financial, housing) using interaction terms within the same fixed effects framework. None of the interactions were significant, indicating that the network disruption associated with moving is similar regardless of why the person moved (Appendix Table S22). Whether a young adult leaves the Bay Area for a career opportunity or for housing reasons, the effect on their network geography is comparable.
+
+### Whether people make longer-term adjustment?
+
+Table 4 uses a first-difference model to examine network changes one wave after moving. The dependent variable is the change in network ties from wave 2 to wave 3, and the predictor is whether the respondent moved between waves 1 and 2. This ensures a full wave separates the move from the outcome. Coefficients represent how much more (or less) wave-2 movers' networks changed between waves 2 and 3 relative to non-movers over the same period.
+
+In the longer term, local ties tend to stabilize after a move: neither local kin nor local non-kin show significant changes from wave 2 to wave 3 for movers of either type. Distant ties, however, tell a different story. Out-of-Bay movers who gained distant non-kin and kin at the time of their move (Table 3) show significant declines in those same ties one wave later. This suggests that immediately after relocating, movers continue to name the friends and family they left behind, but over time they begin to drop these connections from their reported networks. The descriptive trajectories confirm this pattern (Appendix Figure S2).
+
+```{r tbl-network-fd, eval=data_available}
+# First-difference: ΔNetwork (w2→w3) ~ Moved at w2 + controls
+# Same column structure as Table 3: 4 network DVs as columns, predictors as rows
+w2 <- df_raw %>% filter(agegroup == 0, WAVE == 2)
+w3 <- df_raw %>% filter(agegroup == 0, WAVE == 3)
+
+fd <- inner_join(
+  w2 %>% select(prim_key, Moved_out_of_Bay_w23, Moved_in_Bay_w23,
+                 Nonkin_within_60_N, Nonkin_GT_Hour_N,
+                 Kin_within_60_N, Kin_GT_Hour_N,
+                 Owns_home, Full_Time, BA_or_greater, Marr_Cohab,
+                 LE_NewJob, LE_NewSchool, LEX_Birth, LE_FinanProb, Plan_to_Move),
+  w3 %>% select(prim_key,
+                 Nonkin_within_60_N, Nonkin_GT_Hour_N,
+                 Kin_within_60_N, Kin_GT_Hour_N),
+  by = "prim_key", suffix = c("_w2", "_w3")
+) %>%
+  mutate(
+    d_nonkin_local = Nonkin_within_60_N_w3 - Nonkin_within_60_N_w2,
+    d_kin_local    = Kin_within_60_N_w3 - Kin_within_60_N_w2,
+    d_nonkin_dist  = Nonkin_GT_Hour_N_w3 - Nonkin_GT_Hour_N_w2,
+    d_kin_dist     = Kin_GT_Hour_N_w3 - Kin_GT_Hour_N_w2
+  )
+
+fd_dvs <- c("d_nonkin_local", "d_kin_local", "d_nonkin_dist", "d_kin_dist")
+fd_col_labels <- c("Local Non-Kin", "Local Kin", "Distant Non-Kin", "Distant Kin")
+
+fd_predictors <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23",
+                    "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                    "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+                    "Plan_to_Move")
+
+# Run full OLS for each DV, return all coefficients
+run_full_fd <- function(dv, predictors, data) {
+  f <- as.formula(paste(dv, "~", paste(predictors, collapse = " + ")))
+  d <- data[complete.cases(data[, c(dv, predictors, "prim_key")]), ]
+  fit <- lm(f, data = d)
+  rob_se <- sqrt(diag(vcovCL(fit, cluster = d$prim_key)))
+  coefs <- coef(fit)
+  # Drop intercept for display
+  coefs <- coefs[names(coefs) != "(Intercept)"]
+  rob_se <- rob_se[names(rob_se) != "(Intercept)"]
+  p_vals <- 2 * pt(abs(coefs / rob_se), df = fit$df.residual, lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***", ifelse(p_vals < 0.05, "**", ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = rob_se, stars = stars, n = nobs(fit))
+}
+
+fmt_fd <- function(model, var) {
+  if (is.null(model) || !(var %in% names(model$coefs))) return("")
+  sprintf("%.3f%s (%.3f)", model$coefs[var], model$stars[var], model$se[var])
+}
+
+fd_models <- lapply(fd_dvs, function(dv) run_full_fd(dv, fd_predictors, fd))
+
+# Build table with same structure as Table 3
+move_vars_fd <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23")
+control_vars_fd <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                      "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move")
+sections_fd <- list(
+  list(before = move_vars_fd[1], label = "Move Indicators (wave 2)"),
+  list(before = control_vars_fd[1], label = "Controls (wave 2)")
+)
+ordered_fd <- c(move_vars_fd, control_vars_fd)
+
+rows_fd <- list()
+for (var in ordered_fd) {
+  for (s in sections_fd) {
+    if (var == s$before) {
+      rows_fd[[length(rows_fd) + 1]] <- data.frame(
+        Variable = s$label, C1 = "", C2 = "", C3 = "", C4 = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- paste0("  ", pred_labels[var])
+  rows_fd[[length(rows_fd) + 1]] <- data.frame(
+    Variable = label,
+    C1 = fmt_fd(fd_models[[1]], var), C2 = fmt_fd(fd_models[[2]], var),
+    C3 = fmt_fd(fd_models[[3]], var), C4 = fmt_fd(fd_models[[4]], var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_fd[[length(rows_fd) + 1]] <- data.frame(Variable = "N",
+  C1 = as.character(fd_models[[1]]$n), C2 = as.character(fd_models[[2]]$n),
+  C3 = as.character(fd_models[[3]]$n), C4 = as.character(fd_models[[4]]$n),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_fd <- do.call(rbind, rows_fd)
+sec_fd <- which(result_fd$Variable %in% c("Move Indicators (wave 2)", "Controls (wave 2)"))
+n_fd <- which(result_fd$Variable == "N")
+
+ft_fd <- flextable(result_fd)
+ft_fd <- set_header_labels(ft_fd, Variable = "",
+  C1 = "(1)", C2 = "(2)", C3 = "(3)", C4 = "(4)")
+ft_fd <- add_header_row(ft_fd,
+  values = c("", "Local", "Distant"),
+  colwidths = c(1, 2, 2), top = TRUE)
+ft_fd <- add_header_row(ft_fd,
+  values = c("", fd_col_labels),
+  colwidths = c(1, 1, 1, 1, 1), top = FALSE)
+ft_fd <- theme_booktabs(ft_fd)
+ft_fd <- bold(ft_fd, i = sec_fd, j = 1, part = "body")
+if (length(n_fd) > 0) ft_fd <- hline(ft_fd, i = n_fd - 1, part = "body",
+                                       border = fp_border(width = 0.5))
+ft_fd <- fontsize(ft_fd, size = 9, part = "all")
+ft_fd <- font(ft_fd, fontname = "Times New Roman", part = "all")
+ft_fd <- align(ft_fd, j = 1, align = "left", part = "body")
+ft_fd <- align(ft_fd, j = -1, align = "center", part = "body")
+ft_fd <- align(ft_fd, align = "center", part = "header")
+ft_fd <- bold(ft_fd, part = "header")
+ft_fd <- set_caption(ft_fd, caption = "Table 4. Longer-Term Network Changes: One Wave After Moving (First-Difference, Young Adults)")
+ft_fd <- add_footer_lines(ft_fd, values = paste(
+  "First-difference models. DV = change in network ties from wave 2 to wave 3.",
+  "IVs = moved between wave 1 and wave 2 + wave-2 controls.",
+  "Young adults only. Cluster-robust SEs (by individual) in parentheses.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_fd <- fontsize(ft_fd, size = 9, part = "footer")
+ft_fd <- font(ft_fd, fontname = "Times New Roman", part = "footer")
+ft_fd <- italic(ft_fd, part = "footer")
+ft_fd <- autofit(ft_fd)
+ft_fd
+```

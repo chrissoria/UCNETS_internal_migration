@@ -1,13 +1,1699 @@
 ---
 title: "Appendix"
-format: pdf
+format: docx
 ---
 
-# Appendix A: Variable Definitions
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(here)
+library(flextable)
+library(dplyr)
+library(tidyr)
+library(officer)
+library(sandwich)
 
-## A.1 Moving Variables
+set_flextable_defaults(
+  font.family = "Times New Roman",
+  font.size = 10,
+  padding.top = 1,
+  padding.bottom = 1
+)
+```
 
-### Moved_out_of_Bay_w23
+```{r helper-functions}
+# ===========================================================================
+# PARSER: Tab-delimited model output (Stata-style)
+# ===========================================================================
+parse_model_output <- function(path) {
+  lines <- readLines(path, encoding = "UTF-8")
+  headers <- trimws(strsplit(lines[1], "\t")[[1]])
+  headers[1] <- "Variable"
+  n_cols <- length(headers)
+  data_lines <- lines[-(1:3)]
+  parsed <- lapply(data_lines, function(l) {
+    parts <- trimws(strsplit(l, "\t")[[1]])
+    length(parts) <- n_cols
+    parts[is.na(parts)] <- ""
+    parts
+  })
+  df <- as.data.frame(do.call(rbind, parsed),
+                      stringsAsFactors = FALSE, check.names = FALSE)
+  names(df) <- headers
+  lns_idx <- which(df$Variable == "lns1_1_1")[1]
+  obs_idx <- tail(which(df$Variable == "Observations"), 1)
+  if (!is.na(lns_idx) && length(obs_idx) > 0) {
+    df <- df[c(1:(lns_idx - 1), obs_idx), ]
+  }
+  rownames(df) <- NULL
+  df
+}
+
+# ===========================================================================
+# VARIABLE LABELS
+# ===========================================================================
+var_labels <- c(
+  "within_lag_Moved_Town"          = "  Prior Move",
+  "within_lag_Owns_Home"           = "  Home Ownership",
+  "within_lag_Full_Time"           = "  Full-Time Employment",
+  "within_lag_LT_BA"              = "  Less than BA",
+  "within_lag_New_Job"            = "  New Job",
+  "within_lag_New_School"         = "  New School",
+  "within_lag_Finan_Prob"         = "  Financial Problems",
+  "within_lag_Marr_Cohab"         = "  Married/Cohabiting",
+  "within_lag_Kin_within_60_N"    = "  Kin within 60 min",
+  "within_lag_Nonkin_within_60_N" = "  Non-kin within 60 min",
+  "within_lag_Nonkin_in_HH_N"    = "  Non-kin in Household",
+  "within_lag_Kin_in_HH_N"       = "  Kin in Household",
+  "within_lag_Kin_GT_Hour"        = "  Kin >60 min away",
+  "within_lag_Nonkin_GT_Hour"     = "  Non-kin >60 min away",
+  "within_lag_LEX_Birth"          = "  Birth of Child",
+  "within_lag_Plan_Move"          = "  Plan to Move (lagged)",
+  "between_web"        = "  Internet Use",
+  "between_LT_BA"     = "  Less than BA",
+  "between_Owns_home"  = "  Home Ownership",
+  "between_employed"   = "  Employment",
+  "between_Marr_Cohab" = "  Married/Cohabiting",
+  "between_age"        = "  Age",
+  "black_race" = "  Black",
+  "asian_race" = "  Asian",
+  "other_race" = "  Other Race",
+  "latino_eth" = "  Latino/a",
+  "gender"     = "  Female",
+  "Constant"     = "Constant",
+  "Observations" = "N"
+)
+
+# ===========================================================================
+# REORDER & LABEL
+# ===========================================================================
+reorder_and_label <- function(df) {
+  n_cols <- ncol(df)
+  coef_idx <- which(df$Variable != "")
+  pairs <- list()
+  for (i in coef_idx) {
+    var <- df$Variable[i]
+    if (i + 1 <= nrow(df) && df$Variable[i + 1] == "") {
+      pairs[[length(pairs) + 1]] <- list(var = var, rows = df[c(i, i + 1), ])
+    } else {
+      pairs[[length(pairs) + 1]] <- list(var = var, rows = df[i, , drop = FALSE])
+    }
+  }
+  demo_names <- c("black_race", "asian_race", "other_race",
+                   "latino_eth", "gender", "female")
+  within_p  <- Filter(function(p) grepl("^within_", p$var), pairs)
+  between_p <- Filter(function(p) grepl("^between_", p$var) &
+                         p$var != "between_age", pairs)
+  demo_p    <- Filter(function(p) p$var %in% demo_names |
+                         p$var == "between_age", pairs)
+  const_p   <- Filter(function(p) p$var == "Constant", pairs)
+  obs_p     <- Filter(function(p) p$var == "Observations", pairs)
+  make_header <- function(label) {
+    row <- setNames(as.list(c(label, rep("", n_cols - 1))), names(df))
+    as.data.frame(row, stringsAsFactors = FALSE, check.names = FALSE)
+  }
+  parts <- list()
+  if (length(within_p) > 0) {
+    parts <- c(parts, list(make_header("Within-Person Effects (Lagged)")))
+    for (p in within_p) parts <- c(parts, list(p$rows))
+  }
+  if (length(between_p) > 0) {
+    parts <- c(parts, list(make_header("Between-Person Effects")))
+    for (p in between_p) parts <- c(parts, list(p$rows))
+  }
+  if (length(demo_p) > 0) {
+    parts <- c(parts, list(make_header("Demographics")))
+    for (p in demo_p) parts <- c(parts, list(p$rows))
+  }
+  for (p in const_p) parts <- c(parts, list(p$rows))
+  for (p in obs_p)   parts <- c(parts, list(p$rows))
+  result <- do.call(rbind, parts)
+  rownames(result) <- NULL
+  mask <- result$Variable %in% names(var_labels)
+  result$Variable[mask] <- var_labels[result$Variable[mask]]
+  result
+}
+
+# ===========================================================================
+# TABLE FORMATTERS
+# ===========================================================================
+make_table <- function(df, caption, note,
+                       col_labels = NULL, span_header = NULL) {
+  section_names <- c("Within-Person Effects (Lagged)",
+                     "Between-Person Effects", "Demographics")
+  section_rows <- which(df$Variable %in% section_names)
+  n_row <- which(df$Variable == "N")
+  ft <- flextable(df)
+  if (!is.null(col_labels)) {
+    ft <- do.call(set_header_labels, c(list(x = ft), col_labels))
+  }
+  if (!is.null(span_header)) {
+    ft <- add_header_row(ft, values = span_header$values,
+                         colwidths = span_header$widths, top = TRUE)
+  }
+  ft <- theme_booktabs(ft)
+  ft <- bold(ft, i = section_rows, j = 1, part = "body")
+  if (length(n_row) > 0) {
+    ft <- hline(ft, i = n_row - 1, part = "body",
+                border = fp_border(width = 0.5))
+  }
+  ft <- fontsize(ft, size = 10, part = "all")
+  ft <- font(ft, fontname = "Times New Roman", part = "all")
+  ft <- align(ft, j = 1, align = "left", part = "body")
+  ft <- align(ft, j = -1, align = "center", part = "body")
+  ft <- align(ft, align = "center", part = "header")
+  ft <- bold(ft, part = "header")
+  ft <- set_caption(ft, caption = caption)
+  ft <- add_footer_lines(ft, values = note)
+  ft <- fontsize(ft, size = 9, part = "footer")
+  ft <- font(ft, fontname = "Times New Roman", part = "footer")
+  ft <- italic(ft, part = "footer")
+  ft <- autofit(ft)
+  ft
+}
+
+make_simple_table <- function(df, caption, note = NULL,
+                              bold_last = FALSE, col_labels = NULL,
+                              span_header = NULL) {
+  ft <- flextable(df)
+  if (!is.null(col_labels)) {
+    ft <- do.call(set_header_labels, c(list(x = ft), col_labels))
+  }
+  if (!is.null(span_header)) {
+    ft <- add_header_row(ft, values = span_header$values,
+                         colwidths = span_header$widths, top = TRUE)
+  }
+  ft <- theme_booktabs(ft)
+  if (bold_last) ft <- bold(ft, i = nrow(df), part = "body")
+  ft <- fontsize(ft, size = 10, part = "all")
+  ft <- font(ft, fontname = "Times New Roman", part = "all")
+  ft <- align(ft, j = 1, align = "left", part = "body")
+  ft <- align(ft, j = -1, align = "center", part = "body")
+  ft <- align(ft, align = "center", part = "header")
+  ft <- bold(ft, part = "header")
+  ft <- set_caption(ft, caption = caption)
+  if (!is.null(note)) {
+    ft <- add_footer_lines(ft, values = note)
+    ft <- fontsize(ft, size = 9, part = "footer")
+    ft <- font(ft, fontname = "Times New Roman", part = "footer")
+    ft <- italic(ft, part = "footer")
+  }
+  ft <- autofit(ft)
+  ft
+}
+```
+
+```{r load-data}
+data_path <- here("data", "out", "R_DF.rds")
+if (!file.exists(data_path)) data_path <- here("data", "R_DF.rds")
+data_available <- file.exists(data_path)
+if (data_available) df_raw <- readRDS(data_path)
+```
+
+# Appendix
+
+## Section 1: Planners
+
+Table S1 shows the characteristics of planners vs. non-planners by age group. Among young adults, planners are less likely to be homeowners (17% vs. 22%) or married (32% vs. 44%), and have more distant non-kin (2.2 vs. 1.7). Among older adults, the homeownership gap is larger (45% vs. 75%), and planners have fewer local kin (1.3 vs. 1.6) but more distant non-kin (1.7 vs. 1.1). Table S2 uses a panel model to test whether within-person changes predict changes in planning. For young adults, gaining local non-kin is associated with increased planning, and homeownership consistently reduces planning in both age groups. These patterns are consistent with the main-text Table 1 findings.
+
+```{r tbl-plan-cross-sectional, eval=data_available}
+plan_by_status <- df_raw %>%
+  filter(!is.na(Plan_to_Move)) %>%
+  mutate(
+    age_plan = interaction(
+      ifelse(agegroup == 0, "Young", "Old"),
+      ifelse(Plan_to_Move == 1, "Planners", "Non-Planners"),
+      sep = " "
+    )
+  ) %>%
+  group_by(age_plan) %>%
+  summarise(
+    N = sprintf("%d", n()),
+    `Mean Age` = sprintf("%.1f", mean(age, na.rm = TRUE)),
+    `% Female` = sprintf("%.1f%%", 100 * mean(female, na.rm = TRUE)),
+    `% BA+` = sprintf("%.1f%%", 100 * mean(BA_or_greater, na.rm = TRUE)),
+    `% Homeowner` = sprintf("%.1f%%", 100 * mean(Owns_home, na.rm = TRUE)),
+    `% Married/Cohab` = sprintf("%.1f%%", 100 * mean(Marr_Cohab, na.rm = TRUE)),
+    `% Full-Time` = sprintf("%.1f%%", 100 * mean(Full_Time, na.rm = TRUE)),
+    `Mean Kin <60 min` = sprintf("%.1f", mean(Kin_within_60_N, na.rm = TRUE)),
+    `Mean Non-kin <60 min` = sprintf("%.1f", mean(Nonkin_within_60_N, na.rm = TRUE)),
+    `Mean Kin >60 min` = sprintf("%.1f", mean(Kin_GT_Hour_N, na.rm = TRUE)),
+    `Mean Non-kin >60 min` = sprintf("%.1f", mean(Nonkin_GT_Hour_N, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-age_plan, names_to = "Variable", values_to = "value") %>%
+  pivot_wider(names_from = age_plan, values_from = value)
+
+desired_cols <- c("Variable",
+                  "Young Planners", "Young Non-Planners",
+                  "Old Planners", "Old Non-Planners")
+plan_by_status <- plan_by_status[, intersect(desired_cols, names(plan_by_status))]
+
+make_simple_table(
+  plan_by_status,
+  caption = "Table S1. Characteristics of Respondents by Planning Status and Age Group",
+  note = paste(
+    "Observation-level: each person-wave is one row.",
+    "Planners = Plan_to_Move == 1 at that wave.",
+    "Network variables are concurrent (same wave as planning status)."
+  ),
+  col_labels = list(Variable = ""),
+  span_header = list(
+    values = c("", "Young Adults", "Older Adults"),
+    widths = c(1, 2, 2)
+  )
+)
+```
+
+```{r tbl-plan-to-move-appendix}
+df <- parse_model_output(here("out", "plan_to_move_results_mixed.csv"))
+df <- reorder_and_label(df)
+
+make_table(
+  df,
+  caption = "Table S2. Within-Person Predictors of Planning to Move (Hybrid Between-Within Model)",
+  note = paste(
+    "Hybrid between-within linear probability model with random intercepts.",
+    "Robust (CR2) standard errors in parentheses.",
+    "Within-person predictors lagged one wave.",
+    "This table complements Table S1 by estimating",
+    "how within-person changes in predictors are associated with changes in planning intentions.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(Variable = "", Young = "Young Adults", Old = "Older Adults")
+)
+```
+
+## Section 2: Who Moves?
+
+Table S3 adds Plan to Move to the mobility models. It is not significant (p > 0.15 in both), and other coefficients do not change, so planning does not confound the main results. Tables S4 and S5 show hybrid between-within panel models for out-of-Bay and within-Bay moves. For out-of-Bay moves among young adults (Table S4), the strongest within-person predictors are prior move (-0.211), kin in household (0.065), and internet use between-person (0.094). For within-Bay moves (Table S5), becoming a homeowner reduces local mobility (-0.289), financial problems increase it (0.158), and marriage reduces it (-0.196). Lagged Plan to Move is significant for within-Bay moves (0.322) but not out-of-Bay, suggesting planning is more relevant for local relocation decisions.
+
+```{r tbl-mobility-lpm-appendix, eval=data_available}
+# ---------------------------------------------------------------------------
+# Cross-sectional LPM: Mobility outcomes, young adults only
+# 4 models: Out-of-Bay (base, +Plan), Within-Bay (base, +Plan)
+# Addresses: does including Plan_to_Move change the other coefficients?
+# ---------------------------------------------------------------------------
+young_data <- df_raw %>% filter(agegroup == 0)
+
+base_preds <- c(
+  "Kin_within_60_N", "Nonkin_within_60_N",
+  "Kin_in_HH_N", "Nonkin_in_HH_N",
+  "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+  "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+  "LE_MovedTown",
+  "black_race", "asian_race", "other_race", "latino_eth", "female", "age"
+)
+
+# Out-of-Bay: without and with Plan
+out_base_f <- paste("Moved_out_of_Bay_w23 ~", paste(base_preds, collapse = " + "), "+ factor(WAVE)")
+out_plan_f <- paste("Moved_out_of_Bay_w23 ~", paste(c(base_preds, "Plan_to_Move"), collapse = " + "), "+ factor(WAVE)")
+out_data <- young_data[complete.cases(young_data[, c("Moved_out_of_Bay_w23", base_preds, "Plan_to_Move", "prim_key", "WAVE")]), ]
+fit_ob <- lm(as.formula(out_base_f), data = out_data)
+se_ob  <- sqrt(diag(vcovCL(fit_ob, cluster = out_data$prim_key)))
+fit_op <- lm(as.formula(out_plan_f), data = out_data)
+se_op  <- sqrt(diag(vcovCL(fit_op, cluster = out_data$prim_key)))
+
+# Within-Bay: without and with Plan (exclude out-movers)
+young_in <- young_data %>%
+  filter(Moved_out_of_Bay_w23 != 1 | is.na(Moved_out_of_Bay_w23))
+in_base_f <- paste("Moved_in_Bay_w23 ~", paste(base_preds, collapse = " + "), "+ factor(WAVE)")
+in_plan_f <- paste("Moved_in_Bay_w23 ~", paste(c(base_preds, "Plan_to_Move"), collapse = " + "), "+ factor(WAVE)")
+in_data <- young_in[complete.cases(young_in[, c("Moved_in_Bay_w23", base_preds, "Plan_to_Move", "prim_key", "WAVE")]), ]
+fit_ib <- lm(as.formula(in_base_f), data = in_data)
+se_ib  <- sqrt(diag(vcovCL(fit_ib, cluster = in_data$prim_key)))
+fit_ip <- lm(as.formula(in_plan_f), data = in_data)
+se_ip  <- sqrt(diag(vcovCL(fit_ip, cluster = in_data$prim_key)))
+
+# Format cell
+fmt_cell <- function(fit, se, var) {
+  if (!(var %in% names(coef(fit)))) return("")
+  b <- coef(fit)[var]; s <- se[var]
+  p <- 2 * pt(abs(b / s), df = fit$df.residual, lower.tail = FALSE)
+  star <- ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.10, "*", "")))
+  sprintf("%.3f%s (%.3f)", b, star, s)
+}
+
+# Variable labels (reuse from helper chunk)
+cs_labels_app <- c(
+  "Kin_within_60_N" = "Kin within 60 min", "Nonkin_within_60_N" = "Non-kin within 60 min",
+  "Kin_in_HH_N" = "Kin in Household", "Nonkin_in_HH_N" = "Non-kin in Household",
+  "Kin_GT_Hour_N" = "Kin >60 min away", "Nonkin_GT_Hour_N" = "Non-kin >60 min away",
+  "Owns_home" = "Home Ownership", "Full_Time" = "Full-Time Employment",
+  "BA_or_greater" = "BA or Greater", "Marr_Cohab" = "Married/Cohabiting",
+  "LE_NewJob" = "New Job", "LE_NewSchool" = "New School",
+  "LEX_Birth" = "Birth of Child", "LE_FinanProb" = "Financial Problems",
+  "LE_MovedTown" = "Prior Move", "Plan_to_Move" = "Plan to Move",
+  "black_race" = "Black", "asian_race" = "Asian", "other_race" = "Other Race",
+  "latino_eth" = "Latino/a", "female" = "Female", "age" = "Age"
+)
+
+network <- c("Kin_within_60_N", "Nonkin_within_60_N", "Kin_in_HH_N",
+             "Nonkin_in_HH_N", "Kin_GT_Hour_N", "Nonkin_GT_Hour_N")
+ses <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab")
+events <- c("LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "LE_MovedTown")
+demo <- c("black_race", "asian_race", "other_race", "latino_eth", "female", "age")
+ordered <- c(network, ses, events, "Plan_to_Move", demo)
+
+sections_app <- list(
+  list(before = network[1], label = "Network Variables"),
+  list(before = ses[1],     label = "Socioeconomic Status"),
+  list(before = events[1],  label = "Life Events"),
+  list(before = demo[1],    label = "Demographics")
+)
+
+rows <- list()
+for (var in ordered) {
+  for (s in sections_app) {
+    if (var == s$before) {
+      rows[[length(rows) + 1]] <- data.frame(
+        Variable = s$label, OB = "", OP = "", IB = "", IP = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- ifelse(var %in% names(cs_labels_app), cs_labels_app[var], var)
+  label <- paste0("  ", label)
+  rows[[length(rows) + 1]] <- data.frame(
+    Variable = label,
+    OB = fmt_cell(fit_ob, se_ob, var), OP = fmt_cell(fit_op, se_op, var),
+    IB = fmt_cell(fit_ib, se_ib, var), IP = fmt_cell(fit_ip, se_ip, var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows[[length(rows) + 1]] <- data.frame(Variable = "N",
+  OB = as.character(nobs(fit_ob)), OP = as.character(nobs(fit_op)),
+  IB = as.character(nobs(fit_ib)), IP = as.character(nobs(fit_ip)),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows[[length(rows) + 1]] <- data.frame(Variable = "R-squared",
+  OB = sprintf("%.3f", summary(fit_ob)$r.squared), OP = sprintf("%.3f", summary(fit_op)$r.squared),
+  IB = sprintf("%.3f", summary(fit_ib)$r.squared), IP = sprintf("%.3f", summary(fit_ip)$r.squared),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_app <- do.call(rbind, rows)
+sec_rows <- which(result_app$Variable %in%
+  c("Network Variables", "Socioeconomic Status", "Life Events", "Demographics"))
+n_row_app <- which(result_app$Variable == "N")
+
+ft_app <- flextable(result_app)
+ft_app <- set_header_labels(ft_app, Variable = "",
+  OB = "(1)", OP = "(2)", IB = "(3)", IP = "(4)")
+ft_app <- add_header_row(ft_app,
+  values = c("", "Moved Out of Bay", "Moved Within Bay"),
+  colwidths = c(1, 2, 2), top = TRUE)
+ft_app <- theme_booktabs(ft_app)
+ft_app <- bold(ft_app, i = sec_rows, j = 1, part = "body")
+if (length(n_row_app) > 0) {
+  ft_app <- hline(ft_app, i = n_row_app - 1, part = "body", border = fp_border(width = 0.5))
+}
+ft_app <- fontsize(ft_app, size = 9, part = "all")
+ft_app <- font(ft_app, fontname = "Times New Roman", part = "all")
+ft_app <- align(ft_app, j = 1, align = "left", part = "body")
+ft_app <- align(ft_app, j = -1, align = "center", part = "body")
+ft_app <- align(ft_app, align = "center", part = "header")
+ft_app <- bold(ft_app, part = "header")
+ft_app <- set_caption(ft_app, caption = "Table S3. Cross-Sectional Predictors of Mobility With and Without Plan to Move, Young Adults")
+ft_app <- add_footer_lines(ft_app, values = paste(
+  "Linear probability model with wave fixed effects, young adults (ages 21-30) only.",
+  "Cluster-robust standard errors (by individual) in parentheses.",
+  "Models (1) and (3): base specification. Models (2) and (4): add concurrent Plan to Move.",
+  "Plan to Move is not significant in either model (p > 0.15), and other coefficients are",
+  "substantively unchanged, indicating that concurrent planning intentions do not confound",
+  "the cross-sectional predictors of mobility. Within-Bay models exclude out-of-Bay movers.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_app <- fontsize(ft_app, size = 9, part = "footer")
+ft_app <- font(ft_app, fontname = "Times New Roman", part = "footer")
+ft_app <- italic(ft_app, part = "footer")
+ft_app <- autofit(ft_app)
+ft_app
+```
+
+```{r tbl-out-of-bay-appendix}
+df <- parse_model_output(here("out", "out_of_bay_area_moves_results_mixed.csv"))
+df <- reorder_and_label(df)
+
+make_table(
+  df,
+  caption = "Table S4. Within-Person Predictors of Moving Out of the Bay Area (Hybrid Between-Within Model)",
+  note = paste(
+    "Hybrid between-within linear probability model with random intercepts.",
+    "Robust (CR2) standard errors in parentheses.",
+    "Within-person predictors lagged one wave.",
+    "Models (2) and (4) add lagged Plan to Move as predictor;",
+    "coefficients on other variables are substantively unchanged.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(
+    Variable = "",
+    `Young Without Plan` = "(1)",
+    `Young With Plan`    = "(2)",
+    `Old Without Plan`   = "(3)",
+    `Old With Plan`      = "(4)"
+  ),
+  span_header = list(
+    values = c("", "Young Adults", "Older Adults"),
+    widths = c(1, 2, 2)
+  )
+)
+```
+
+```{r tbl-within-bay-appendix}
+df <- parse_model_output(here("out", "within_bay_area_moves_results_mixed.csv"))
+df <- reorder_and_label(df)
+
+make_table(
+  df,
+  caption = "Table S5. Within-Person Predictors of Moving Within the Bay Area (Hybrid Between-Within Model)",
+  note = paste(
+    "Hybrid between-within linear probability model with random intercepts.",
+    "Sample excludes respondents who moved out of the Bay Area.",
+    "Robust (CR2) standard errors in parentheses.",
+    "Within-person predictors lagged one wave.",
+    "Models (2) and (4) add lagged Plan to Move as predictor;",
+    "coefficients on other variables are substantively unchanged.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(
+    Variable = "",
+    `Young Without Plan` = "(1)",
+    `Young With Plan`    = "(2)",
+    `Old Without Plan`   = "(3)",
+    `Old With Plan`      = "(4)"
+  ),
+  span_header = list(
+    values = c("", "Young Adults", "Older Adults"),
+    widths = c(1, 2, 2)
+  )
+)
+```
+
+## Section 3: Robustness — Controlling for Prior Move (Waves 2-3 Only)
+
+Table S6 adds a lagged move indicator (moved prior wave) to the Plan to Move model. This drops all wave 1 observations (N falls from 3,114 to 1,962). The lagged move coefficient itself is not significant (0.041, p = 0.14). The key predictors from Table 1 remain stable: local kin still reduces planning (-0.010, p < 0.05) and homeownership remains the strongest negative predictor (-0.082, p < 0.01). Distant non-kin loses significance in this smaller sample (0.008, ns), likely due to reduced power rather than a substantive change.
+
+```{r tbl-plan-lag-move-app, eval=data_available}
+# Table 1 variant with lag_Moved_Town
+preds_lag <- c(
+  "Kin_within_60_N", "Nonkin_within_60_N",
+  "Kin_in_HH_N", "Nonkin_in_HH_N",
+  "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+  "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+  "lag_Moved_Town",
+  "black_race", "asian_race", "other_race", "latino_eth", "female", "age"
+)
+
+f_lag <- paste("Plan_to_Move ~", paste(preds_lag, collapse = " + "), "+ factor(WAVE)")
+d_lag <- df_raw[complete.cases(df_raw[, c("Plan_to_Move", preds_lag, "prim_key", "agegroup", "WAVE")]), ]
+
+run_lpm_app <- function(data) {
+  fit <- lm(as.formula(f_lag), data = data)
+  cl_se <- sqrt(diag(vcovCL(fit, cluster = data$prim_key)))
+  coefs <- coef(fit)
+  t_stats <- coefs / cl_se
+  p_vals <- 2 * pt(abs(t_stats), df = fit$df.residual, lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***", ifelse(p_vals < 0.05, "**", ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = cl_se, stars = stars,
+       n = nobs(fit), n_clusters = n_distinct(data$prim_key),
+       r2 = summary(fit)$r.squared)
+}
+
+m_all_l   <- run_lpm_app(d_lag)
+m_young_l <- run_lpm_app(d_lag %>% filter(agegroup == 0))
+m_old_l   <- run_lpm_app(d_lag %>% filter(agegroup == 1))
+
+fmt_l <- function(m, var) {
+  if (var %in% names(m$coefs)) {
+    sprintf("%.3f%s (%.3f)", m$coefs[var], m$stars[var], m$se[var])
+  } else { "" }
+}
+
+cs_labels_lag <- c(
+  "Kin_within_60_N" = "Kin within 60 min", "Nonkin_within_60_N" = "Non-kin within 60 min",
+  "Kin_in_HH_N" = "Kin in Household", "Nonkin_in_HH_N" = "Non-kin in Household",
+  "Kin_GT_Hour_N" = "Kin >60 min away", "Nonkin_GT_Hour_N" = "Non-kin >60 min away",
+  "Owns_home" = "Home Ownership", "Full_Time" = "Full-Time Employment",
+  "BA_or_greater" = "BA or Greater", "Marr_Cohab" = "Married/Cohabiting",
+  "LE_NewJob" = "New Job", "LE_NewSchool" = "New School",
+  "LEX_Birth" = "Birth of Child", "LE_FinanProb" = "Financial Problems",
+  "lag_Moved_Town" = "Moved Prior Wave",
+  "black_race" = "Black", "asian_race" = "Asian", "other_race" = "Other Race",
+  "latino_eth" = "Latino/a", "female" = "Female", "age" = "Age"
+)
+
+network_l <- c("Kin_within_60_N", "Nonkin_within_60_N", "Kin_in_HH_N",
+               "Nonkin_in_HH_N", "Kin_GT_Hour_N", "Nonkin_GT_Hour_N")
+ses_l <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab")
+events_l <- c("LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "lag_Moved_Town")
+demo_l <- c("black_race", "asian_race", "other_race", "latino_eth", "female", "age")
+ordered_l <- c(network_l, ses_l, events_l, demo_l)
+
+sections_l <- list(
+  list(before = network_l[1], label = "Network Variables"),
+  list(before = ses_l[1],     label = "Socioeconomic Status"),
+  list(before = events_l[1],  label = "Life Events"),
+  list(before = demo_l[1],    label = "Demographics")
+)
+
+rows_l <- list()
+for (var in ordered_l) {
+  for (s in sections_l) {
+    if (var == s$before) {
+      rows_l[[length(rows_l) + 1]] <- data.frame(
+        Variable = s$label, All = "", Young = "", Old = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- ifelse(var %in% names(cs_labels_lag), cs_labels_lag[var], var)
+  label <- paste0("  ", label)
+  rows_l[[length(rows_l) + 1]] <- data.frame(
+    Variable = label,
+    All = fmt_l(m_all_l, var), Young = fmt_l(m_young_l, var), Old = fmt_l(m_old_l, var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_l[[length(rows_l) + 1]] <- data.frame(Variable = "N (person-waves)",
+  All = as.character(m_all_l$n), Young = as.character(m_young_l$n),
+  Old = as.character(m_old_l$n), stringsAsFactors = FALSE, check.names = FALSE)
+rows_l[[length(rows_l) + 1]] <- data.frame(Variable = "N (individuals)",
+  All = as.character(m_all_l$n_clusters), Young = as.character(m_young_l$n_clusters),
+  Old = as.character(m_old_l$n_clusters), stringsAsFactors = FALSE, check.names = FALSE)
+rows_l[[length(rows_l) + 1]] <- data.frame(Variable = "R-squared",
+  All = sprintf("%.3f", m_all_l$r2), Young = sprintf("%.3f", m_young_l$r2),
+  Old = sprintf("%.3f", m_old_l$r2), stringsAsFactors = FALSE, check.names = FALSE)
+
+result_l <- do.call(rbind, rows_l)
+sec_l <- which(result_l$Variable %in% c("Network Variables", "Socioeconomic Status",
+                                          "Life Events", "Demographics"))
+n_l <- which(result_l$Variable == "N (person-waves)")
+
+ft_l <- flextable(result_l)
+ft_l <- set_header_labels(ft_l, Variable = "", All = "(1) Whole Sample",
+                          Young = "(2) Young Adults", Old = "(3) Older Adults")
+ft_l <- theme_booktabs(ft_l)
+ft_l <- bold(ft_l, i = sec_l, j = 1, part = "body")
+if (length(n_l) > 0) ft_l <- hline(ft_l, i = n_l - 1, part = "body", border = fp_border(width = 0.5))
+ft_l <- fontsize(ft_l, size = 9, part = "all")
+ft_l <- font(ft_l, fontname = "Times New Roman", part = "all")
+ft_l <- align(ft_l, j = 1, align = "left", part = "body")
+ft_l <- align(ft_l, j = -1, align = "center", part = "body")
+ft_l <- align(ft_l, align = "center", part = "header")
+ft_l <- bold(ft_l, part = "header")
+ft_l <- set_caption(ft_l, caption = "Table S6. Predictors of Planning to Move, With Prior Move Control (Waves 2-3 Only)")
+ft_l <- add_footer_lines(ft_l, values = paste(
+  "Same specification as Table 1 with the addition of Moved Prior Wave (lagged move indicator).",
+  "Because the lag is undefined at wave 1, all wave 1 observations are dropped.",
+  "Cluster-robust SEs (by individual) in parentheses. Wave fixed effects included.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_l <- fontsize(ft_l, size = 9, part = "footer")
+ft_l <- font(ft_l, fontname = "Times New Roman", part = "footer")
+ft_l <- italic(ft_l, part = "footer")
+ft_l <- autofit(ft_l)
+ft_l
+```
+
+## Section 4: Does Planning Mediate the Network-Mobility Link?
+
+Table S7 tests whether planning mediates the network-mobility link using the mediation package. For out-of-Bay moves, the only network variable with a significant total effect is distant non-kin (0.022, p < 0.01), and planning mediates less than 1% of it. Local kin has a significant direct effect (-0.022, p = 0.02) but the indirect path through planning is not significant. For within-Bay moves, none of the network effects are significant. Table S8 shows coefficient attenuation: adding Plan to Move reduces the local kin coefficient by 30% and the distant kin coefficient by 39%, but neither indirect effect reaches significance. Overall, networks operate on mobility through channels other than conscious planning.
+
+```{r tbl-mediation-summary}
+# Mediation summary from script 13 (mediation package, quasi-Bayesian MC)
+med_df <- data.frame(
+  Predictor = c("Kin within 60 min", "Non-kin within 60 min",
+                "Kin in Household", "Non-kin in Household",
+                "Kin >60 min away", "Non-kin >60 min away"),
+  Total     = c("-0.023*", "-0.008", "0.016", "0.010", "0.013", "0.022***"),
+  Direct    = c("-0.022**", "-0.008", "0.016", "0.009", "0.012", "0.022***"),
+  Indirect  = c("-0.001", "0.000", "0.000", "0.001", "0.001", "0.000"),
+  Pct_Med   = c("3.1%", "-0.9%", "-0.1%", "8.8%", "5.3%", "0.8%"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  med_df,
+  caption = "Table S7. Mediation Analysis: How Much of the Network Effect on Out-of-Bay Moves Operates Through Planning?",
+  note = paste(
+    "Causal mediation analysis using the mediation package (Tingley et al., 2014).",
+    "Young adults only. Lagged network predictors (t-1) predict concurrent Plan_to_Move (mediator)",
+    "and Out-of-Bay mobility (outcome). Quasi-Bayesian MC simulation (1000 draws).",
+    "Total = Direct + Indirect. % Mediated = Indirect / Total.",
+    "Planning mediates less than 10% of every network effect,",
+    "indicating that networks operate on mobility primarily through non-deliberative channels.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(Predictor = "", Total = "Total Effect",
+                    Direct = "Direct Effect", Indirect = "Indirect (via Plan)",
+                    Pct_Med = "% Mediated")
+)
+```
+
+```{r tbl-attenuation}
+# Coefficient attenuation: total vs. direct effect comparison
+atten_df <- data.frame(
+  Predictor = c("Kin within 60 min", "Non-kin within 60 min",
+                "Kin in Household", "Non-kin in Household",
+                "Kin >60 min away", "Non-kin >60 min away"),
+  Total_Coef = c("-0.026", "0.002", "0.063**", "-0.003", "-0.030*", "0.008"),
+  Total_SE   = c("(0.024)", "(0.007)", "(0.028)", "(0.017)", "(0.018)", "(0.011)"),
+  Direct_Coef = c("-0.018", "0.003", "0.054**", "-0.002", "-0.018", "0.007"),
+  Direct_SE   = c("(0.024)", "(0.007)", "(0.027)", "(0.017)", "(0.018)", "(0.010)"),
+  Pct_Atten   = c("30.4%", "-51.1%", "13.5%", "20.1%", "38.9%", "11.0%"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  atten_df,
+  caption = "Table S8. Coefficient Attenuation When Controlling for Planning Intentions (Out-of-Bay Moves)",
+  note = paste(
+    "Total effect: lagged network variable predicting Out-of-Bay moves without Plan_to_Move.",
+    "Direct effect: same model with concurrent Plan_to_Move added.",
+    "% Attenuation = (Total - Direct) / Total.",
+    "Young adults only. Cluster-robust standard errors in parentheses.",
+    "Attenuation ranges from 11-39% for significant predictors, suggesting planning",
+    "partially but not predominantly mediates the network-mobility link.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(Predictor = "",
+                    Total_Coef = "Coef", Total_SE = "SE",
+                    Direct_Coef = "Coef", Direct_SE = "SE",
+                    Pct_Atten = "% Attenuation"),
+  span_header = list(
+    values = c("", "Total Effect (w/o Plan)", "Direct Effect (w/ Plan)", ""),
+    widths = c(1, 2, 2, 1)
+  )
+)
+```
+
+## Section 5: The Plan-Action Gap
+
+Tables S9-S13 look at planning vs. actual moves. Table S9 shows 72% of young planners follow through vs. 40% of older planners. Among young planners who do move, 47% stay within the Bay and 31% leave. Tables S10-S12 break down follow-through and stuck rates by demographics. Full-time employed young adults have the highest follow-through (75%) and married young adults are close behind (76%). Among older adults, rates are lower across all groups (39-45%). Table S13 compares move reasons: planned movers cite conflict more often (17% vs. 13%), while unplanned movers cite partner reasons more (17% vs. 9%). Career is the top reason for both groups (32% planned, 30% unplanned). About 40% of all moves happen without prior stated intention.
+
+```{r tbl-planner-destinations}
+destinations <- data.frame(
+  Group = c("Young Adults", "Older Adults", "Total"),
+  N_Planned    = c(212, 92, 304),
+  Moved_Within = c("100 (47.2%)", "21 (22.8%)", "121 (39.8%)"),
+  Moved_Out    = c("65 (30.7%)",  "13 (14.1%)", "78 (25.7%)"),
+  Moved_Any    = c("153 (72.2%)", "37 (40.2%)", "190 (62.5%)"),
+  Stuck        = c("59 (27.8%)",  "55 (59.8%)", "114 (37.5%)"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  destinations,
+  caption = "Table S9. Where Do Planners End Up? Destinations Among Those Who Planned to Move",
+  note = paste(
+    "Timing-aware: only counts moves occurring at or after the wave of planning.",
+    "Young planners follow through at roughly twice the rate of older planners (72% vs. 40%).",
+    "Among those who do move, young planners are more likely to leave the Bay Area."
+  ),
+  bold_last = TRUE,
+  col_labels = list(Group = "", N_Planned = "N Planned",
+                    Moved_Within = "Moved Within Bay", Moved_Out = "Moved Out of Bay",
+                    Moved_Any = "Moved (Any)", Stuck = "Did Not Move")
+)
+```
+
+```{r tbl-conversion-by-group}
+conversion <- read.csv(here("out", "plan_action_conversion_by_group.csv"),
+                       stringsAsFactors = FALSE, check.names = FALSE)
+conversion <- conversion %>%
+  filter(!grepl("NaN|Other Race|Age \\(mean", Variable))
+
+make_simple_table(
+  conversion,
+  caption = "Table S10. Follow-Through Rates Among Planners by Demographic Group",
+  note = paste(
+    "Percentage of planners who subsequently moved, by demographic characteristic.",
+    "Timing-aware: move must occur at or after the wave of planning.",
+    "Young adults show consistently higher follow-through across all groups."
+  ),
+  col_labels = list(Variable = "",
+                    `Young_% Moved` = "Young",
+                    `Old_% Moved` = "Old",
+                    `Total_% Moved` = "Total")
+)
+```
+
+```{r tbl-stuck-by-group}
+stuck <- read.csv(here("out", "plan_action_stuck_by_group.csv"),
+                  stringsAsFactors = FALSE, check.names = FALSE)
+stuck <- stuck %>%
+  filter(!grepl("NaN|Other Race|Age \\(mean", Variable))
+
+make_simple_table(
+  stuck,
+  caption = "Table S11. Stuck Rates Among Planners by Demographic Group",
+  note = paste(
+    "Percentage of planners who never moved, by demographic characteristic.",
+    "Older adults are stuck at roughly double the rate of young adults across most groups.",
+    "Full-time employment and marriage/cohabitation are associated with lower stuck rates among young adults."
+  ),
+  col_labels = list(Variable = "",
+                    `Young_% Stuck` = "Young",
+                    `Old_% Stuck` = "Old",
+                    `Total_% Stuck` = "Total")
+)
+```
+
+```{r tbl-unplanned-by-group}
+unplanned <- read.csv(here("out", "plan_action_unplanned_by_group.csv"),
+                      stringsAsFactors = FALSE, check.names = FALSE)
+unplanned <- unplanned %>%
+  filter(!grepl("NaN|Other Race|Age \\(mean", Variable))
+
+make_simple_table(
+  unplanned,
+  caption = "Table S12. Unplanned Mover Rates by Demographic Group",
+  note = paste(
+    "Percentage of movers who never reported planning to move beforehand.",
+    "Roughly 40% of all moves occur without prior stated intention,",
+    "suggesting that much residential mobility is reactive rather than planned."
+  ),
+  col_labels = list(Variable = "",
+                    `Young_% Unplanned` = "Young",
+                    `Old_% Unplanned` = "Old",
+                    `Total_% Unplanned` = "Total")
+)
+```
+
+```{r tbl-reasons-by-planning}
+reasons_plan <- data.frame(
+  Reason = c("Career (Own/Partner)", "Financial", "Conflict/Forced",
+             "Housing", "Partner/Relationship", "Other/Unclear",
+             "New Environment", "Family/Friends", "N (movers)"),
+  Planned   = c("43 (32.1%)", "26 (19.4%)", "23 (17.2%)",
+                "19 (14.2%)", "12 (9.0%)",  "19 (14.2%)",
+                "16 (11.9%)", "15 (11.2%)", "134"),
+  Unplanned = c("90 (29.5%)", "51 (16.7%)", "38 (12.5%)",
+                "53 (17.4%)", "52 (17.0%)", "40 (13.1%)",
+                "34 (11.1%)", "30 (9.8%)",  "305"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  reasons_plan,
+  caption = "Table S13. Self-Reported Reasons for Moving by Planning Status",
+  note = paste(
+    "Planned movers = reported planning to move before moving.",
+    "Unplanned movers = moved without prior stated intention.",
+    "Planned movers cite conflict/forced more often (17% vs. 13%);",
+    "unplanned movers cite partner/relationship more (17% vs. 9%).",
+    "Categories not mutually exclusive."
+  ),
+  bold_last = TRUE,
+  col_labels = list(Reason = "", Planned = "Planned Movers",
+                    Unplanned = "Unplanned Movers")
+)
+```
+
+## Section 6: Move Reasons by Demographic Group (Young Adults)
+
+Table S14 shows move reasons by subgroup for young movers. Men and women cite career at similar rates (37% vs. 34%), but women cite conflict twice as often (16% vs. 8%). Among movers who got a new job, only 44% cite career as the reason; 27% of movers without a new job also cite career. Movers with above-average distant kin cite career more (40% vs. 30%) and family less (6% vs. 11%), and the same pattern holds for distant non-kin (43% vs. 28% career). Tables S15-S17 show mean network sizes by reason and the older adult versions.
+
+```{r tbl-reasons-by-demo, eval=data_available}
+# Move reasons as columns, demographic subgroups as rows
+movers_demo <- df_raw %>%
+  filter(agegroup == 0, Moved_w23 == 1, !is.na(a19i_response)) %>%
+  mutate(
+    reason_career      = pmax(a19i_own_job_school, a19i_partner_job_school, na.rm = TRUE),
+    reason_partner     = pmax(a19i_partner_spouse, a19i_relationship_end, na.rm = TRUE),
+    reason_financial   = a19i_financial,
+    reason_housing     = a19i_housing,
+    reason_environment = a19i_new_environment,
+    reason_family      = pmax(a19i_family_support, a19i_meet_friends, na.rm = TRUE),
+    reason_conflict    = pmax(a19i_conflicts, a19i_forced, na.rm = TRUE),
+    reason_other       = pmax(a19i_other, a19i_not_clear, na.rm = TRUE),
+    high_distant_kin = ifelse(Kin_GT_Hour_N > mean(Kin_GT_Hour_N, na.rm = TRUE), 1, 0),
+    high_distant_nonkin = ifelse(Nonkin_GT_Hour_N > mean(Nonkin_GT_Hour_N, na.rm = TRUE), 1, 0)
+  )
+
+reason_vars_d <- c("reason_career", "reason_partner", "reason_financial",
+                    "reason_housing", "reason_environment", "reason_family",
+                    "reason_conflict", "reason_other")
+reason_cols <- c("Career", "Partner", "Financial", "Housing",
+                  "New Env.", "Family", "Conflict", "Other")
+
+# Build one row: % citing each reason within a subgroup
+build_row <- function(data, label) {
+  n_total <- nrow(data)
+  pcts <- sapply(reason_vars_d, function(v) {
+    sprintf("%.1f%%", 100 * mean(data[[v]], na.rm = TRUE))
+  })
+  c(label, pcts, as.character(n_total))
+}
+
+subgroups <- list(
+  list(data = movers_demo, label = "All Young Movers"),
+  list(data = movers_demo %>% filter(female == 0), label = "  Men"),
+  list(data = movers_demo %>% filter(female == 1), label = "  Women"),
+  list(data = movers_demo %>% filter(LE_NewJob == 1), label = "  New Job"),
+  list(data = movers_demo %>% filter(LE_NewJob == 0), label = "  No New Job"),
+  list(data = movers_demo %>% filter(LEX_Birth == 1), label = "  New Baby"),
+  list(data = movers_demo %>% filter(LEX_Birth == 0), label = "  No New Baby"),
+  list(data = movers_demo %>% filter(high_distant_kin == 1), label = "  High Distant Kin"),
+  list(data = movers_demo %>% filter(high_distant_kin == 0), label = "  Low Distant Kin"),
+  list(data = movers_demo %>% filter(high_distant_nonkin == 1), label = "  High Distant Non-Kin"),
+  list(data = movers_demo %>% filter(high_distant_nonkin == 0), label = "  Low Distant Non-Kin")
+)
+
+# Section headers
+tbl_rows <- list()
+tbl_rows[[1]] <- c("All", rep("", length(reason_cols) + 1))
+tbl_rows[[2]] <- build_row(subgroups[[1]]$data, subgroups[[1]]$label)
+tbl_rows[[3]] <- c("Gender", rep("", length(reason_cols) + 1))
+tbl_rows[[4]] <- build_row(subgroups[[2]]$data, subgroups[[2]]$label)
+tbl_rows[[5]] <- build_row(subgroups[[3]]$data, subgroups[[3]]$label)
+tbl_rows[[6]] <- c("New Job", rep("", length(reason_cols) + 1))
+tbl_rows[[7]] <- build_row(subgroups[[4]]$data, subgroups[[4]]$label)
+tbl_rows[[8]] <- build_row(subgroups[[5]]$data, subgroups[[5]]$label)
+tbl_rows[[9]] <- c("New Baby", rep("", length(reason_cols) + 1))
+tbl_rows[[10]] <- build_row(subgroups[[6]]$data, subgroups[[6]]$label)
+tbl_rows[[11]] <- build_row(subgroups[[7]]$data, subgroups[[7]]$label)
+tbl_rows[[12]] <- c("Distant Kin (>60 min)", rep("", length(reason_cols) + 1))
+tbl_rows[[13]] <- build_row(subgroups[[8]]$data, subgroups[[8]]$label)
+tbl_rows[[14]] <- build_row(subgroups[[9]]$data, subgroups[[9]]$label)
+tbl_rows[[15]] <- c("Distant Non-Kin (>60 min)", rep("", length(reason_cols) + 1))
+tbl_rows[[16]] <- build_row(subgroups[[10]]$data, subgroups[[10]]$label)
+tbl_rows[[17]] <- build_row(subgroups[[11]]$data, subgroups[[11]]$label)
+
+col_names <- c("Group", reason_cols, "N")
+tbl_demo <- as.data.frame(do.call(rbind, tbl_rows), stringsAsFactors = FALSE)
+names(tbl_demo) <- col_names
+
+sec_rows_d <- which(tbl_demo$Group %in% c("All", "Gender", "New Job", "New Baby",
+                                            "Distant Kin (>60 min)",
+                                            "Distant Non-Kin (>60 min)"))
+
+ft_d <- flextable(tbl_demo)
+ft_d <- theme_booktabs(ft_d)
+ft_d <- bold(ft_d, i = sec_rows_d, j = 1, part = "body")
+ft_d <- fontsize(ft_d, size = 9, part = "all")
+ft_d <- font(ft_d, fontname = "Times New Roman", part = "all")
+ft_d <- align(ft_d, j = 1, align = "left", part = "body")
+ft_d <- align(ft_d, j = -1, align = "center", part = "body")
+ft_d <- align(ft_d, align = "center", part = "header")
+ft_d <- bold(ft_d, part = "header")
+ft_d <- set_caption(ft_d, caption = "Table S14. Self-Reported Reasons for Moving by Subgroup (Young Adults)")
+ft_d <- add_footer_lines(ft_d, values = paste(
+  "Young adult movers only. Each cell shows the percentage of movers in that subgroup",
+  "who cited the reason. Categories are not mutually exclusive.",
+  "High/Low splits at the sample mean of ties >60 minutes away."
+))
+ft_d <- fontsize(ft_d, size = 9, part = "footer")
+ft_d <- font(ft_d, fontname = "Times New Roman", part = "footer")
+ft_d <- italic(ft_d, part = "footer")
+ft_d <- autofit(ft_d)
+ft_d
+```
+
+## Section 6b: Move Reasons and Networks
+
+```{r tbl-reasons-network-young, eval=data_available}
+# Network size by reason -- young adults
+movers_young <- df_raw %>%
+  filter(Moved_w23 == 1, !is.na(a19i_response), agegroup == 0) %>%
+  mutate(
+    reason_career      = pmax(a19i_own_job_school, a19i_partner_job_school, na.rm = TRUE),
+    reason_partner     = pmax(a19i_partner_spouse, a19i_relationship_end, na.rm = TRUE),
+    reason_financial   = a19i_financial,
+    reason_housing     = a19i_housing,
+    reason_environment = a19i_new_environment,
+    reason_family      = pmax(a19i_family_support, a19i_meet_friends, na.rm = TRUE),
+    reason_conflict    = pmax(a19i_conflicts, a19i_forced, na.rm = TRUE),
+    reason_other       = pmax(a19i_other, a19i_not_clear, na.rm = TRUE)
+  )
+
+reason_vars_a <- c("reason_career", "reason_partner", "reason_financial",
+                    "reason_housing", "reason_environment", "reason_family",
+                    "reason_conflict", "reason_other")
+reason_labels_a <- c("Career (Own/Partner)", "Partner/Relationship", "Financial",
+                      "Housing", "New Environment", "Family/Friends",
+                      "Conflict/Forced", "Other/Unclear")
+
+reason_net_young <- lapply(seq_along(reason_vars_a), function(i) {
+  v <- reason_vars_a[i]
+  citers    <- movers_young %>% filter(.data[[v]] == 1)
+  nonciters <- movers_young %>% filter(.data[[v]] == 0)
+  kin_cite   <- mean(citers$Kin_in_HH_N + citers$Kin_within_60_N + citers$Kin_GT_Hour_N, na.rm = TRUE)
+  kin_nocite <- mean(nonciters$Kin_in_HH_N + nonciters$Kin_within_60_N + nonciters$Kin_GT_Hour_N, na.rm = TRUE)
+  nk_cite    <- mean(citers$Nonkin_in_HH_N + citers$Nonkin_within_60_N + citers$Nonkin_GT_Hour_N, na.rm = TRUE)
+  nk_nocite  <- mean(nonciters$Nonkin_in_HH_N + nonciters$Nonkin_within_60_N + nonciters$Nonkin_GT_Hour_N, na.rm = TRUE)
+  kin_all <- movers_young %>% mutate(total_kin = Kin_in_HH_N + Kin_within_60_N + Kin_GT_Hour_N)
+  t_kin <- tryCatch(t.test(total_kin ~ .data[[v]], data = kin_all)$p.value, error = function(e) NA)
+  sig <- ifelse(is.na(t_kin), "", ifelse(t_kin < 0.01, "***", ifelse(t_kin < 0.05, "**", ifelse(t_kin < 0.10, "*", ""))))
+  data.frame(Reason = reason_labels_a[i], N = nrow(citers),
+    NonKin_Cite = sprintf("%.2f", nk_cite), NonKin_NoCite = sprintf("%.2f", nk_nocite),
+    Kin_Cite = sprintf("%.2f", kin_cite), Kin_NoCite = sprintf("%.2f", kin_nocite),
+    Kin_Sig = sig, stringsAsFactors = FALSE, check.names = FALSE)
+})
+net_reasons_young <- do.call(rbind, reason_net_young)
+
+make_simple_table(
+  net_reasons_young,
+  caption = "Table S15. Mean Network Size by Self-Reported Reason for Moving (Young Adults)",
+  note = paste(
+    "Young adults (ages 21-30) only.",
+    "Mean total non-kin and total kin network size for movers who cited each reason",
+    "vs. movers who did not. Significance from two-sample t-test on kin ties.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(
+    Reason = "", N = "N",
+    NonKin_Cite = "Cite", NonKin_NoCite = "Don't Cite",
+    Kin_Cite = "Cite", Kin_NoCite = "Don't Cite", Kin_Sig = ""
+  ),
+  span_header = list(
+    values = c("", "", "Non-Kin Ties", "Kin Ties", ""),
+    widths = c(1, 1, 2, 2, 1)
+  )
+)
+```
+
+```{r tbl-reasons-all-ages, eval=data_available}
+# All-ages and older-adult move reasons by distance
+movers_all <- df_raw %>%
+  filter(Moved_w23 == 1, !is.na(a19i_response)) %>%
+  mutate(
+    reason_career      = pmax(a19i_own_job_school, a19i_partner_job_school, na.rm = TRUE),
+    reason_partner     = pmax(a19i_partner_spouse, a19i_relationship_end, na.rm = TRUE),
+    reason_financial   = a19i_financial,
+    reason_housing     = a19i_housing,
+    reason_environment = a19i_new_environment,
+    reason_family      = pmax(a19i_family_support, a19i_meet_friends, na.rm = TRUE),
+    reason_conflict    = pmax(a19i_conflicts, a19i_forced, na.rm = TRUE),
+    reason_other       = pmax(a19i_other, a19i_not_clear, na.rm = TRUE),
+    move_type = case_when(
+      Moved_out_of_Bay_w23 == 1 ~ "Out of Bay",
+      Moved_in_Bay_w23 == 1     ~ "Within Bay",
+      TRUE                      ~ "Other"
+    )
+  ) %>%
+  filter(move_type %in% c("Out of Bay", "Within Bay"))
+
+reason_vars <- c("reason_career", "reason_partner", "reason_financial",
+                  "reason_housing", "reason_environment", "reason_family",
+                  "reason_conflict", "reason_other")
+reason_labels <- c("Career (Own/Partner)", "Partner/Relationship", "Financial",
+                    "Housing", "New Environment", "Family/Friends",
+                    "Conflict/Forced", "Other/Unclear")
+
+build_col <- function(data) {
+  n_total <- nrow(data)
+  counts <- sapply(reason_vars, function(v) sum(data[[v]], na.rm = TRUE))
+  pcts <- sprintf("%.1f%%", 100 * counts / n_total)
+  c(paste0(counts, " (", pcts, ")"), as.character(n_total))
+}
+
+# Older adults only
+movers_old <- movers_all %>% filter(agegroup == 1)
+out_old <- movers_old %>% filter(move_type == "Out of Bay")
+in_old  <- movers_old %>% filter(move_type == "Within Bay")
+
+tbl_old <- data.frame(
+  Reason = c(reason_labels, "N (movers)"),
+  Out    = build_col(out_old),
+  Within = build_col(in_old),
+  Total  = build_col(movers_old),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  tbl_old,
+  caption = "Table S16. Self-Reported Reasons for Moving by Move Distance (Older Adults)",
+  note = paste(
+    "Older adults (ages 50-70) only. Parallel to Table 3 in main text (young adults).",
+    "Reasons coded from open-ended responses (a19i).",
+    "Categories are not mutually exclusive.",
+    "Observation-level: each person-wave with a move contributes one set of reasons."
+  ),
+  bold_last = TRUE,
+  col_labels = list(Reason = "", Out = "Out of Bay",
+                    Within = "Within Bay", Total = "Total")
+)
+```
+
+```{r tbl-reasons-network-old, eval=data_available}
+# Network size by reason -- older adults only
+reason_net_old <- lapply(seq_along(reason_vars), function(i) {
+  v <- reason_vars[i]
+  citers    <- movers_old %>% filter(.data[[v]] == 1)
+  nonciters <- movers_old %>% filter(.data[[v]] == 0)
+  kin_cite   <- mean(citers$Kin_in_HH_N + citers$Kin_within_60_N + citers$Kin_GT_Hour_N, na.rm = TRUE)
+  kin_nocite <- mean(nonciters$Kin_in_HH_N + nonciters$Kin_within_60_N + nonciters$Kin_GT_Hour_N, na.rm = TRUE)
+  nk_cite    <- mean(citers$Nonkin_in_HH_N + citers$Nonkin_within_60_N + citers$Nonkin_GT_Hour_N, na.rm = TRUE)
+  nk_nocite  <- mean(nonciters$Nonkin_in_HH_N + nonciters$Nonkin_within_60_N + nonciters$Nonkin_GT_Hour_N, na.rm = TRUE)
+  kin_all <- movers_old %>%
+    mutate(total_kin = Kin_in_HH_N + Kin_within_60_N + Kin_GT_Hour_N)
+  t_kin <- tryCatch(t.test(total_kin ~ .data[[v]], data = kin_all)$p.value, error = function(e) NA)
+  sig <- ifelse(is.na(t_kin), "", ifelse(t_kin < 0.01, "***", ifelse(t_kin < 0.05, "**", ifelse(t_kin < 0.10, "*", ""))))
+  data.frame(
+    Reason = reason_labels[i], N = nrow(citers),
+    NonKin_Cite = sprintf("%.2f", nk_cite), NonKin_NoCite = sprintf("%.2f", nk_nocite),
+    Kin_Cite = sprintf("%.2f", kin_cite), Kin_NoCite = sprintf("%.2f", kin_nocite),
+    Kin_Sig = sig, stringsAsFactors = FALSE, check.names = FALSE
+  )
+})
+net_reasons_old <- do.call(rbind, reason_net_old)
+
+make_simple_table(
+  net_reasons_old,
+  caption = "Table S17. Mean Network Size by Self-Reported Reason for Moving (Older Adults)",
+  note = paste(
+    "Older adults (ages 50-70) only. Parallel to Table 4 in main text (young adults).",
+    "Mean total non-kin and total kin network size for movers who cited each reason",
+    "vs. movers who did not. Significance from two-sample t-test on kin ties.",
+    "* p < 0.10, ** p < 0.05, *** p < 0.01."
+  ),
+  col_labels = list(
+    Reason = "", N = "N",
+    NonKin_Cite = "Cite", NonKin_NoCite = "Don't Cite",
+    Kin_Cite = "Cite", Kin_NoCite = "Don't Cite", Kin_Sig = ""
+  ),
+  span_header = list(
+    values = c("", "", "Non-Kin Ties", "Kin Ties", ""),
+    widths = c(1, 1, 2, 2, 1)
+  )
+)
+```
+
+## Section 7: Psychological Distress (Additional)
+
+Tables S18-S19 and Figure S1 show well-being by plan-action category. Stable non-movers report the highest well-being (4.05 on the 1-5 scale). Planned movers report the lowest (3.68), followed by unplanned movers (3.74) and stuck planners (3.82). Among young adults (Table S19), the differences are smaller: stable (3.75), stuck (3.72), unplanned (3.67), planned movers (3.66). The gap between movers and non-movers is wider for older adults, where stable non-movers average 4.16.
+
+```{r tbl-distress-app}
+distress <- data.frame(
+  Category = c("Stable (No Plan, No Move)", "Planned but Stuck",
+               "Unplanned Mover", "Planned & Moved"),
+  N    = c(2014, 279, 409, 169),
+  Mean = c("1.90", "2.13", "2.23", "2.28"),
+  SD   = c("0.605", "0.669", "0.652", "0.644"),
+  Suicide = c("4.3%", "7.5%", "9.0%", "10.7%"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  distress,
+  caption = "Table S18. Psychological Distress by Plan-Action Category (Observation-Level)",
+  note = paste(
+    "Distress index: 10-item h16 scale, range 1-5 (higher = more distress).",
+    "Suicide ideation: h17, thought about taking own life in past 30 days.",
+    "Observation-level: each person-wave is one observation."
+  ),
+  col_labels = list(Category = "", N = "N", Mean = "Mean Distress",
+                    SD = "SD", Suicide = "% Suicide Ideation")
+)
+```
+
+```{r fig-distress-app}
+#| fig-width: 7
+#| fig-height: 4.5
+#| fig-cap: "Figure S1. Psychological Distress by Plan-Action Category"
+
+library(ggplot2)
+
+distress_plot <- data.frame(
+  Category = c("Stable", "Planned\nbut Stuck", "Unplanned\nMover", "Planned\n& Moved"),
+  Mean = c(1.90, 2.134, 2.226, 2.277),
+  SE   = c(0.605 / sqrt(2014), 0.669 / sqrt(279),
+           0.652 / sqrt(409),  0.644 / sqrt(169)),
+  N    = c(2014, 279, 409, 169),
+  stringsAsFactors = FALSE
+)
+distress_plot$Category <- factor(distress_plot$Category,
+  levels = c("Stable", "Planned\nbut Stuck", "Unplanned\nMover", "Planned\n& Moved"))
+
+theme_paper_d <- theme_minimal(base_family = "Times New Roman", base_size = 11) +
+  theme(legend.position = "none", panel.grid.minor = element_blank())
+
+ggplot(distress_plot, aes(x = Category, y = Mean, fill = Category)) +
+  geom_col(width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - 1.96 * SE, ymax = Mean + 1.96 * SE), width = 0.2) +
+  geom_text(aes(label = paste0("n=", N)), y = 0.1, size = 3,
+            family = "Times New Roman", color = "white") +
+  scale_fill_manual(values = c("Stable" = "#1B7837", "Planned\nbut Stuck" = "#D73027",
+                                "Unplanned\nMover" = "#F4A582", "Planned\n& Moved" = "#4575B4")) +
+  scale_y_continuous(limits = c(0, 2.5), expand = expansion(mult = c(0, 0.05))) +
+  labs(x = NULL, y = "Mean Distress Index (1-5)") +
+  theme_paper_d
+```
+
+```{r tbl-distress-by-age-app}
+distress_age <- data.frame(
+  Category = c("Planned & Moved", "Planned but Stuck",
+               "Stable (No Plan, No Move)", "Unplanned Mover"),
+  Young_N = c(139, 176, 426, 319),
+  Young_Mean = c("2.31", "2.25", "2.22", "2.30"),
+  Young_SD   = c("0.655", "0.649", "0.660", "0.638"),
+  Old_N   = c(30, 103, 1588, 90),
+  Old_Mean = c("2.12", "1.93", "1.82", "1.98"),
+  Old_SD   = c("0.575", "0.657", "0.560", "0.643"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  distress_age,
+  caption = "Table S19. Psychological Distress by Plan-Action Category and Age Group",
+  note = paste(
+    "Distress index: 10-item h16 scale, range 1-5 (higher = more distress).",
+    "Observation-level. Young adults consistently show higher distress across all categories."
+  ),
+  col_labels = list(
+    Category = "", Young_N = "N", Young_Mean = "Mean", Young_SD = "SD",
+    Old_N = "N", Old_Mean = "Mean", Old_SD = "SD"
+  ),
+  span_header = list(
+    values = c("", "Young Adults", "Older Adults"),
+    widths = c(1, 3, 3)
+  )
+)
+```
+
+## Section 8: Friendship-Making Strategies
+
+Tables S20-S21 show how respondents make new friends. Young adults rely on the workplace (33%) and activities (32%); older adults rarely use the workplace (4%) and instead favor local places (25%) and community groups (17%). About one in five respondents in both groups prefer not to actively seek new friendships. Table S21 shows that community organization users have 8.3 non-kin ties vs. 7.1 for non-users (p < 0.01), and those who make friends through existing connections have 8.1 vs. 7.1 (p < 0.05). Non-engagers have fewer non-kin (6.7 vs. 7.4), though the difference is not significant.
+
+```{r tbl-friendship-strategies-app}
+strategies <- data.frame(
+  Strategy = c("Workplace", "Activities/Hobbies", "Through Existing Connections",
+               "Local Places/Neighborhood", "Community Organizations",
+               "Online", "Non-Engagement (prefers not to)", "Other/Unclear",
+               "N (respondents)"),
+  Young = c("33.3%", "32.1%", "18.6%", "15.5%", "13.7%",
+            "14.3%", "20.7%", "12.5%", "489"),
+  Old   = c("4.0%", "31.0%", "17.0%", "25.0%", "17.0%",
+            "7.0%", "24.0%", "18.0%", "100"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  strategies,
+  caption = "Table S20. Friendship-Making Strategies by Age Group",
+  note = paste(
+    "Coded from open-ended responses (a19f: 'steps taken to meet new people').",
+    "Categories are not mutually exclusive.",
+    "Young adults: ages 21-30; Older adults: ages 50-70."
+  ),
+  bold_last = TRUE,
+  col_labels = list(Strategy = "", Young = "Young Adults", Old = "Older Adults")
+)
+```
+
+```{r tbl-strategy-network-app}
+strat_net <- data.frame(
+  Strategy = c("Community Orgs", "Through Connections", "Local Places",
+               "Workplace", "Activities", "Other/Unclear",
+               "Online", "Non-Engagement"),
+  Users    = c("8.27", "8.11", "8.06", "7.84", "7.71", "7.33", "6.65", "6.73"),
+  NonUsers = c("7.07", "7.05", "7.07", "7.00", "7.02", "7.23", "7.33", "7.38"),
+  Sig      = c("**", "*", "*", "*", "", "", "", ""),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+make_simple_table(
+  strat_net,
+  caption = "Table S21. Mean Non-Kin Network Size by Friendship Strategy Use",
+  note = paste(
+    "Mean concurrent (same-wave) non-kin ties for respondents using each strategy vs. not.",
+    "* p < 0.05, ** p < 0.01 (two-sample t-test).",
+    "Strategies associated with larger networks may facilitate post-move rebuilding."
+  ),
+  col_labels = list(Strategy = "", Users = "Users", NonUsers = "Non-Users",
+                    Sig = "")
+)
+```
+
+## Section 9: Do Network Consequences Differ by Move Reason?
+
+Table S22 tests whether network consequences differ by move reason, using interactions in the FE models. Each reason (career, partner, financial, housing) is tested separately. None of the 16 interaction coefficients (4 reasons x 4 network DVs) are significant (all p > 0.15). For example, career movers who left the Bay show no different change in local non-kin (0.285, p = 0.68) than non-career movers. Network changes after a move look similar regardless of why the person moved.
+
+```{r tbl-network-interactions-app, eval=data_available}
+library(plm)
+
+young_int <- df_raw %>% filter(agegroup == 0) %>%
+  mutate(
+    reason_career    = ifelse(is.na(a19i_response), 0,
+                       pmax(a19i_own_job_school, a19i_partner_job_school, na.rm = TRUE)),
+    reason_partner   = ifelse(is.na(a19i_response), 0,
+                       pmax(a19i_partner_spouse, a19i_relationship_end, na.rm = TRUE)),
+    reason_financial = ifelse(is.na(a19i_response), 0, a19i_financial),
+    reason_housing   = ifelse(is.na(a19i_response), 0, a19i_housing)
+  )
+
+net_dvs_int <- c("Nonkin_within_60_N", "Kin_within_60_N",
+                  "Nonkin_GT_Hour_N", "Kin_GT_Hour_N")
+controls_int <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                   "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move")
+reasons_to_test <- c("reason_career", "reason_partner", "reason_financial", "reason_housing")
+reason_test_labels <- c("Career", "Partner", "Financial", "Housing")
+
+run_int_fe <- function(dv, reason_var, data) {
+  int_out <- paste0("out_x_", reason_var)
+  int_in  <- paste0("in_x_", reason_var)
+  data[[int_out]] <- data$Moved_out_of_Bay_w23 * data[[reason_var]]
+  data[[int_in]]  <- data$Moved_in_Bay_w23 * data[[reason_var]]
+  preds <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23", int_out, int_in, controls_int)
+  f <- as.formula(paste(dv, "~", paste(preds, collapse = " + ")))
+  all_vars <- c(dv, preds, "prim_key", "WAVE")
+  d <- data[complete.cases(data[, all_vars]), ]
+  pdata <- tryCatch(pdata.frame(d, index = c("prim_key", "WAVE"), drop.index = FALSE),
+                    error = function(e) NULL)
+  if (is.null(pdata)) return(list(b_out = NA, se_out = NA, p_out = NA,
+                                   b_in = NA, se_in = NA, p_in = NA))
+  fit <- tryCatch(plm(f, data = pdata, model = "within", effect = "individual"),
+                  error = function(e) NULL)
+  if (is.null(fit)) return(list(b_out = NA, se_out = NA, p_out = NA,
+                                 b_in = NA, se_in = NA, p_in = NA))
+  rob_se <- sqrt(diag(vcovHC(fit, type = "HC1")))
+  get_coef <- function(var) {
+    if (!(var %in% names(coef(fit)))) return(list(b = NA, se = NA, p = NA))
+    b <- coef(fit)[var]; s <- rob_se[var]
+    p <- 2 * pt(abs(b / s), df = df.residual(fit), lower.tail = FALSE)
+    list(b = b, se = s, p = p)
+  }
+  out_res <- get_coef(int_out); in_res <- get_coef(int_in)
+  list(b_out = out_res$b, se_out = out_res$se, p_out = out_res$p,
+       b_in = in_res$b, se_in = in_res$se, p_in = in_res$p)
+}
+
+fmt_int <- function(b, se, p) {
+  if (is.na(b)) return("")
+  star <- ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.10, "*", "")))
+  sprintf("%.3f%s (%.3f)", b, star, se)
+}
+
+rows_int <- list()
+for (r in seq_along(reasons_to_test)) {
+  rows_int[[length(rows_int) + 1]] <- data.frame(
+    Variable = reason_test_labels[r], C1 = "", C2 = "", C3 = "", C4 = "",
+    stringsAsFactors = FALSE, check.names = FALSE)
+  results <- lapply(net_dvs_int, function(dv) run_int_fe(dv, reasons_to_test[r], young_int))
+  rows_int[[length(rows_int) + 1]] <- data.frame(
+    Variable = "  Out-of-Bay \u00D7 reason",
+    C1 = fmt_int(results[[1]]$b_out, results[[1]]$se_out, results[[1]]$p_out),
+    C2 = fmt_int(results[[2]]$b_out, results[[2]]$se_out, results[[2]]$p_out),
+    C3 = fmt_int(results[[3]]$b_out, results[[3]]$se_out, results[[3]]$p_out),
+    C4 = fmt_int(results[[4]]$b_out, results[[4]]$se_out, results[[4]]$p_out),
+    stringsAsFactors = FALSE, check.names = FALSE)
+  rows_int[[length(rows_int) + 1]] <- data.frame(
+    Variable = "  Within-Bay \u00D7 reason",
+    C1 = fmt_int(results[[1]]$b_in, results[[1]]$se_in, results[[1]]$p_in),
+    C2 = fmt_int(results[[2]]$b_in, results[[2]]$se_in, results[[2]]$p_in),
+    C3 = fmt_int(results[[3]]$b_in, results[[3]]$se_in, results[[3]]$p_in),
+    C4 = fmt_int(results[[4]]$b_in, results[[4]]$se_in, results[[4]]$p_in),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+result_int <- do.call(rbind, rows_int)
+sec_int <- which(result_int$Variable %in% reason_test_labels)
+
+ft_int <- flextable(result_int)
+ft_int <- set_header_labels(ft_int, Variable = "",
+  C1 = "(1)", C2 = "(2)", C3 = "(3)", C4 = "(4)")
+ft_int <- add_header_row(ft_int,
+  values = c("", "Local", "Distant"),
+  colwidths = c(1, 2, 2), top = TRUE)
+ft_int <- add_header_row(ft_int,
+  values = c("", "Non-Kin", "Kin", "Non-Kin", "Kin"),
+  colwidths = c(1, 1, 1, 1, 1), top = FALSE)
+ft_int <- theme_booktabs(ft_int)
+ft_int <- bold(ft_int, i = sec_int, j = 1, part = "body")
+ft_int <- fontsize(ft_int, size = 9, part = "all")
+ft_int <- font(ft_int, fontname = "Times New Roman", part = "all")
+ft_int <- align(ft_int, j = 1, align = "left", part = "body")
+ft_int <- align(ft_int, j = -1, align = "center", part = "body")
+ft_int <- align(ft_int, align = "center", part = "header")
+ft_int <- bold(ft_int, part = "header")
+ft_int <- set_caption(ft_int, caption = "Table S22. Do Network Consequences Differ by Move Reason? (FE Interactions, Young Adults)")
+ft_int <- add_footer_lines(ft_int, values = paste(
+  "Each section shows interaction coefficients from a separate FE model:",
+  "Network DV ~ Moved_out + Moved_in + Moved_out\u00D7Reason + Moved_in\u00D7Reason + controls.",
+  "Reason dummies = 0 at non-move waves and at move waves where reason was not cited.",
+  "Coefficients represent the additional network change for movers who cited that reason",
+  "beyond the baseline move effect. Full controls included (not shown).",
+  "HC1 robust SEs. Young adults only.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_int <- fontsize(ft_int, size = 9, part = "footer")
+ft_int <- font(ft_int, fontname = "Times New Roman", part = "footer")
+ft_int <- italic(ft_int, part = "footer")
+ft_int <- autofit(ft_int)
+ft_int
+```
+
+## Section 10: Descriptive Network Trajectories for Wave-2 Movers
+
+Figure S2 tracks mean network ties across all three waves for wave-2 movers vs. never-movers. Distant ties spike at the move then decline; local ties stay stable. This confirms the main-text model findings.
+
+```{r fig-trajectories-w2-movers, eval=data_available}
+#| fig-width: 9
+#| fig-height: 7
+#| fig-cap: "Figure S2. Mean Network Trajectories Across Waves: Wave-2 Movers vs. Never-Movers (Young Adults)"
+
+library(cowplot)
+
+# Build trajectories for wave-2 movers and never-movers
+young_traj <- df_raw %>% filter(agegroup == 0) %>%
+  mutate(nonkin_local = Nonkin_in_HH_N + Nonkin_within_60_N,
+         kin_local = Kin_in_HH_N + Kin_within_60_N) %>%
+  arrange(prim_key, WAVE) %>%
+  group_by(prim_key) %>%
+  mutate(
+    moved_out_w2 = any(WAVE == 2 & Moved_out_of_Bay_w23 == 1, na.rm = TRUE),
+    moved_in_w2  = any(WAVE == 2 & Moved_in_Bay_w23 == 1, na.rm = TRUE),
+    never_moved  = all(Moved_w23 == 0, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  filter(moved_out_w2 | moved_in_w2 | never_moved) %>%
+  mutate(
+    group = case_when(
+      moved_out_w2 ~ "Out-of-Bay (wave 2)",
+      moved_in_w2  ~ "Within-Bay (wave 2)",
+      never_moved  ~ "Never Moved"
+    ),
+    nonkin_dist = Nonkin_GT_Hour_N,
+    kin_dist = Kin_GT_Hour_N
+  )
+
+traj_long <- young_traj %>%
+  select(prim_key, WAVE, group, nonkin_local, kin_local, nonkin_dist, kin_dist) %>%
+  pivot_longer(cols = c(nonkin_local, kin_local, nonkin_dist, kin_dist),
+               names_to = "network", values_to = "count") %>%
+  mutate(
+    panel = case_when(
+      network == "nonkin_local" ~ "A: Local Non-Kin",
+      network == "kin_local"    ~ "B: Local Kin",
+      network == "nonkin_dist"  ~ "C: Distant Non-Kin",
+      network == "kin_dist"     ~ "D: Distant Kin"
+    )
+  ) %>%
+  group_by(WAVE, group, panel) %>%
+  summarise(mean = mean(count, na.rm = TRUE),
+            se = sd(count, na.rm = TRUE) / sqrt(sum(!is.na(count))),
+            .groups = "drop")
+
+traj_long$panel <- factor(traj_long$panel, levels = c(
+  "A: Local Non-Kin", "B: Local Kin", "C: Distant Non-Kin", "D: Distant Kin"))
+
+p_traj <- ggplot(traj_long, aes(x = WAVE, y = mean, color = group, linetype = group)) +
+  geom_ribbon(aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se, fill = group),
+              alpha = 0.08, color = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  geom_vline(xintercept = 2, linetype = "dashed", alpha = 0.3) +
+  facet_wrap(~ panel, ncol = 2, scales = "free_y") +
+  scale_color_manual(values = c("Out-of-Bay (wave 2)" = "#B2182B",
+                                 "Within-Bay (wave 2)" = "#F4A582",
+                                 "Never Moved" = "#2166AC")) +
+  scale_fill_manual(values = c("Out-of-Bay (wave 2)" = "#B2182B",
+                                "Within-Bay (wave 2)" = "#F4A582",
+                                "Never Moved" = "#2166AC")) +
+  scale_linetype_manual(values = c("Out-of-Bay (wave 2)" = "solid",
+                                    "Within-Bay (wave 2)" = "solid",
+                                    "Never Moved" = "dashed")) +
+  scale_x_continuous(breaks = 1:3, labels = c("Wave 1\n(pre-move)", "Wave 2\n(move)", "Wave 3\n(post-move)")) +
+  labs(x = NULL, y = "Mean Ties", color = NULL, fill = NULL, linetype = NULL) +
+  theme_minimal(base_family = "Times New Roman", base_size = 12) +
+  theme(strip.text = element_text(size = 11, face = "bold"),
+        axis.text.x = element_text(size = 11),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10))
+
+note_traj <- ggdraw() +
+  draw_label(
+    paste(
+      "Mean network ties across waves for young adults who moved at wave 2 vs. never-movers.",
+      "95% CI bands shown.\n",
+      "Dashed vertical line marks wave 2 (move wave).",
+      "Dashed blue line = never-movers (reference trajectory)."
+    ),
+    x = 0.02, hjust = 0, size = 9, fontfamily = "Times New Roman", fontface = "italic"
+  )
+
+plot_grid(p_traj, note_traj, ncol = 1, rel_heights = c(1, 0.07))
+```
+
+## Section 11: Network Consequences — Event-Study Plots (Young Adults)
+
+Figure S3 shows network trajectories centered on the move wave for young movers, with 95% confidence bands.
+
+```{r load-plot-data-sec8, eval=data_available}
+# Ensure df_plot exists for sections 8-9
+if (!exists("df_plot")) {
+  person_summary <- df_raw %>%
+    group_by(prim_key) %>%
+    summarise(
+      ever_moved     = max(Moved_w23, na.rm = TRUE),
+      ever_moved_out = max(Moved_out_of_Bay_w23, na.rm = TRUE),
+      ever_moved_in  = max(Moved_in_Bay_w23, na.rm = TRUE),
+      first_move_wave = ifelse(any(Moved_w23 == 1, na.rm = TRUE),
+                                min(WAVE[Moved_w23 == 1], na.rm = TRUE), NA),
+      .groups = "drop"
+    )
+  df_plot <- df_raw %>%
+    left_join(person_summary, by = "prim_key") %>%
+    mutate(
+      wave_rel_move = ifelse(!is.na(first_move_wave), WAVE - first_move_wave, NA),
+      agegroup_label = ifelse(agegroup == 0, "Young Adults (21-30)", "Older Adults (50-70)"),
+      nonkin_local = Nonkin_in_HH_N + Nonkin_within_60_N,
+      kin_local    = Kin_in_HH_N + Kin_within_60_N,
+      total_nonkin = nonkin_local + Nonkin_GT_Hour_N,
+      total_kin    = kin_local + Kin_GT_Hour_N
+    )
+}
+```
+
+```{r fig-event-study-young-app, eval=data_available}
+#| fig-width: 9
+#| fig-height: 8
+#| fig-cap: "Figure S3. Network Changes Around Residential Moves, Young Adults (Event-Study)"
+
+library(cowplot)
+
+young_movers_app <- df_plot %>%
+  filter(agegroup == 0, ever_moved == 1, !is.na(wave_rel_move),
+         wave_rel_move >= -1, wave_rel_move <= 1)
+
+event_long_app <- young_movers_app %>%
+  pivot_longer(cols = c(nonkin_local, kin_local, Nonkin_GT_Hour_N, Kin_GT_Hour_N),
+               names_to = "network", values_to = "count") %>%
+  mutate(
+    tie_type = ifelse(network %in% c("kin_local", "Kin_GT_Hour_N"), "Kin", "Non-Kin"),
+    distance = ifelse(network %in% c("nonkin_local", "kin_local"),
+                      "Local (within 60 min)", "Distant (>60 min)"),
+    panel = paste0(
+      ifelse(tie_type == "Non-Kin" & distance == "Local (within 60 min)", "A",
+      ifelse(tie_type == "Non-Kin", "B",
+      ifelse(distance == "Local (within 60 min)", "C", "D"))),
+      ": ", tie_type, " \u2014 ", distance)
+  ) %>%
+  group_by(wave_rel_move, tie_type, distance, panel) %>%
+  summarise(mean = mean(count, na.rm = TRUE),
+            se = sd(count, na.rm = TRUE) / sqrt(sum(!is.na(count))),
+            .groups = "drop")
+
+event_long_app$panel <- factor(event_long_app$panel, levels = c(
+  "A: Non-Kin \u2014 Local (within 60 min)", "B: Non-Kin \u2014 Distant (>60 min)",
+  "C: Kin \u2014 Local (within 60 min)",     "D: Kin \u2014 Distant (>60 min)"))
+
+theme_app <- theme_minimal(base_family = "Times New Roman", base_size = 12) +
+  theme(strip.text = element_text(size = 11, face = "bold"),
+        axis.text.x = element_text(size = 11), axis.text.y = element_text(size = 10),
+        panel.grid.minor = element_blank(), legend.position = "bottom",
+        legend.box = "horizontal", legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10, face = "bold"))
+
+p_app <- ggplot(event_long_app, aes(x = wave_rel_move, y = mean,
+                                     color = tie_type, linetype = distance, fill = tie_type)) +
+  geom_ribbon(aes(ymin = mean - 1.96*se, ymax = mean + 1.96*se), alpha = 0.12, color = NA) +
+  geom_line(linewidth = 1.1) + geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.4) +
+  facet_wrap(~ panel, ncol = 2, scales = "free_y") +
+  scale_color_manual(values = c("Kin" = "#D73027", "Non-Kin" = "#4575B4")) +
+  scale_fill_manual(values = c("Kin" = "#D73027", "Non-Kin" = "#4575B4")) +
+  scale_linetype_manual(values = c("Local (within 60 min)" = "solid", "Distant (>60 min)" = "dashed")) +
+  scale_x_continuous(breaks = c(-1, 0, 1),
+                     labels = c("Pre-Move\n(t \u2013 1)", "Move Wave\n(t)", "Post-Move\n(t + 1)")) +
+  labs(x = NULL, y = "Mean Number of Ties", color = "Tie Type", fill = "Tie Type", linetype = "Distance") +
+  theme_app
+
+note_app <- ggdraw() + draw_label(
+  paste("Event-study trajectories for young adult movers (ages 21-30).",
+        "95% CI bands shown. Dashed vertical line marks move wave.\n",
+        "Solid lines = local ties. Dashed lines = distant ties. Blue = non-kin. Red = kin."),
+  x = 0.02, hjust = 0, size = 9, fontfamily = "Times New Roman", fontface = "italic")
+
+plot_grid(p_app, note_app, ncol = 1, rel_heights = c(1, 0.07))
+```
+
+## Section 12: Network Consequences of Moving (Older Adults)
+
+Figures S4-S6 show the same network consequence analyses for older adults (ages 50-70). Fewer older adults move, and network effects are smaller.
+
+```{r load-plot-data-appendix, eval=data_available}
+library(ggplot2)
+library(tidyr)
+library(cowplot)
+
+if (!exists("df_plot")) {
+  person_summary <- df_raw %>%
+    group_by(prim_key) %>%
+    summarise(
+      ever_moved     = max(Moved_w23, na.rm = TRUE),
+      ever_moved_out = max(Moved_out_of_Bay_w23, na.rm = TRUE),
+      ever_moved_in  = max(Moved_in_Bay_w23, na.rm = TRUE),
+      first_move_wave = ifelse(any(Moved_w23 == 1, na.rm = TRUE),
+                                min(WAVE[Moved_w23 == 1], na.rm = TRUE), NA),
+      .groups = "drop"
+    )
+  df_plot <- df_raw %>%
+    left_join(person_summary, by = "prim_key") %>%
+    mutate(
+      wave_rel_move = ifelse(!is.na(first_move_wave), WAVE - first_move_wave, NA),
+      agegroup_label = ifelse(agegroup == 0, "Young Adults (21-30)", "Older Adults (50-70)"),
+      nonkin_local = Nonkin_in_HH_N + Nonkin_within_60_N,
+      kin_local    = Kin_in_HH_N + Kin_within_60_N,
+      total_nonkin = nonkin_local + Nonkin_GT_Hour_N,
+      total_kin    = kin_local + Kin_GT_Hour_N
+    )
+}
+
+# Shared panel builder
+make_panel_app <- function(data, var, color, title, ylab = "Mean Ties", show_x = FALSE) {
+  d <- data %>%
+    filter(!is.na(.data[[var]])) %>%
+    group_by(wave_rel_move) %>%
+    summarise(mean = mean(.data[[var]], na.rm = TRUE),
+              se = sd(.data[[var]], na.rm = TRUE) / sqrt(n()),
+              .groups = "drop")
+  p <- ggplot(d, aes(x = wave_rel_move, y = mean)) +
+    geom_ribbon(aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
+                alpha = 0.15, fill = color) +
+    geom_line(color = color, linewidth = 1.1) +
+    geom_point(color = color, size = 3) +
+    geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+    scale_x_continuous(breaks = c(-1, 0, 1),
+                       labels = c("Pre-Move\n(t \u2013 1)", "Move Wave\n(t)", "Post-Move\n(t + 1)")) +
+    labs(x = NULL, y = ylab, title = title) +
+    theme_minimal(base_family = "Times New Roman", base_size = 12) +
+    theme(plot.title = element_text(size = 11, face = "bold"),
+          axis.text.x = element_text(size = 11),
+          axis.text.y = element_text(size = 10),
+          panel.grid.minor = element_blank())
+  if (!show_x) p <- p + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  p
+}
+```
+
+```{r fig-network-old, eval=data_available}
+#| fig-width: 9
+#| fig-height: 8
+#| fig-cap: "Figure S4. Network Tie Changes Around Residential Moves, Older Adults"
+
+old_movers <- df_plot %>%
+  filter(agegroup == 1, ever_moved == 1, !is.na(wave_rel_move),
+         wave_rel_move >= -1, wave_rel_move <= 1)
+
+p_a <- make_panel_app(old_movers, "nonkin_local",     "#4575B4", "A: Local Non-Kin (within 60 min)")
+p_b <- make_panel_app(old_movers, "Nonkin_GT_Hour_N", "#4575B4", "B: Distant Non-Kin (>60 min)")
+p_c <- make_panel_app(old_movers, "kin_local",        "#D73027", "C: Local Kin (within 60 min)", show_x = TRUE)
+p_d <- make_panel_app(old_movers, "Kin_GT_Hour_N",    "#D73027", "D: Distant Kin (>60 min)", show_x = TRUE)
+
+grid1 <- plot_grid(p_a, p_b, p_c, p_d, ncol = 2, align = "hv")
+
+note1 <- ggdraw() +
+  draw_label(
+    paste(
+      "Event-study trajectories for older adult movers (ages 50-70).",
+      "95% CI bands shown. Dashed line marks move wave.\n",
+      "Left column: local ties (HH + within 60 min). Right column: distant ties (>60 min).",
+      "Top row: non-kin. Bottom row: kin."
+    ),
+    x = 0.02, hjust = 0, size = 9.5, fontfamily = "Times New Roman", fontface = "italic"
+  )
+
+plot_grid(grid1, note1, ncol = 1, rel_heights = c(1, 0.08))
+```
+
+```{r fig-outcomes-young-appendix, eval=data_available}
+#| fig-width: 9
+#| fig-height: 4.5
+#| fig-cap: "Figure S5. Network Evaluation and Well-Being Around Residential Moves, Young Adults"
+
+young_movers_app <- df_plot %>%
+  filter(agegroup == 0, ever_moved == 1, !is.na(wave_rel_move),
+         wave_rel_move >= -1, wave_rel_move <= 1) %>%
+  mutate(
+    PsyWB_clean = ifelse(PsyWB > 90, NA, PsyWB),
+    satisfaction = rowMeans(cbind(e3, e4, e5), na.rm = TRUE),
+    help_expect = rowMeans(cbind(e1a, e2a), na.rm = TRUE)
+  )
+
+p_satis_y <- make_panel_app(young_movers_app, "satisfaction", "#1B7837",
+  "A: Satisfaction with Ties", "Mean (1=satisfied, 3=not)", show_x = TRUE)
+p_help_y  <- make_panel_app(young_movers_app, "help_expect",  "#E66101",
+  "B: Expectation of Help", "Mean (1=confident, 5=not)", show_x = TRUE)
+p_wb_y    <- make_panel_app(young_movers_app, "PsyWB_clean",  "#7B3294",
+  "C: Psychological Well-Being", "Mean (1-5, higher=better)", show_x = TRUE)
+
+grid_y <- plot_grid(p_satis_y, p_help_y, p_wb_y, ncol = 3, align = "hv")
+
+note_y <- ggdraw() +
+  draw_label(
+    paste(
+      "Event-study trajectories for young adult movers (ages 21-30). 95% CI bands shown.",
+      "Dashed line marks move wave.\n",
+      "A: Mean of e3, e4, e5 (satisfaction with ties). B: Mean of e1a, e2a (expectation of help).",
+      "C: h16 well-being scale."
+    ),
+    x = 0.02, hjust = 0, size = 9, fontfamily = "Times New Roman", fontface = "italic"
+  )
+
+plot_grid(grid_y, note_y, ncol = 1, rel_heights = c(1, 0.1))
+```
+
+```{r fig-outcomes-old, eval=data_available}
+#| fig-width: 9
+#| fig-height: 4.5
+#| fig-cap: "Figure S6. Network Evaluation and Well-Being Around Residential Moves, Older Adults"
+
+old_movers_out <- old_movers %>%
+  mutate(
+    PsyWB_clean = ifelse(PsyWB > 90, NA, PsyWB),
+    satisfaction = rowMeans(cbind(e3, e4, e5), na.rm = TRUE),
+    help_expect = rowMeans(cbind(e1a, e2a), na.rm = TRUE)
+  )
+
+p_satis <- make_panel_app(old_movers_out, "satisfaction", "#1B7837",
+  "A: Satisfaction with Ties", "Mean (1=satisfied, 3=not)", show_x = TRUE)
+p_help  <- make_panel_app(old_movers_out, "help_expect",  "#E66101",
+  "B: Expectation of Help", "Mean (1=confident, 5=not)", show_x = TRUE)
+p_wb    <- make_panel_app(old_movers_out, "PsyWB_clean",  "#7B3294",
+  "C: Psychological Well-Being", "Mean (1-5, higher=better)", show_x = TRUE)
+
+grid2 <- plot_grid(p_satis, p_help, p_wb, ncol = 3, align = "hv")
+
+note2 <- ggdraw() +
+  draw_label(
+    paste(
+      "Event-study trajectories for older adult movers (ages 50-70). 95% CI bands shown.",
+      "Dashed line marks move wave.\n",
+      "A: Mean of e3, e4, e5 (satisfaction with ties). B: Mean of e1a, e2a (expectation of help).",
+      "C: h16 well-being scale."
+    ),
+    x = 0.02, hjust = 0, size = 9, fontfamily = "Times New Roman", fontface = "italic"
+  )
+
+plot_grid(grid2, note2, ncol = 1, rel_heights = c(1, 0.1))
+```
+
+{{< pagebreak >}}
+
+## Appendix A: Variable Definitions
+
+### A.1 Moving Variables
+
+**Moved_out_of_Bay_w23**
 
 **Definition:** Binary indicator (0/1) for whether the respondent moved out of the Bay Area between survey waves.
 
@@ -28,13 +1714,13 @@ format: pdf
 
 **Corrections:** Five cases were recoded from 1 to 0 at Wave 3 based on qualitative review of open-ended responses indicating local moves rather than out-of-Bay moves.
 
-### Moved_in_Bay_w23
+**Moved_in_Bay_w23**
 
 **Definition:** Binary indicator (0/1) for whether the respondent moved within the Bay Area between survey waves.
 
 **Source:** Derived from `a19j` responses 2 (different neighborhood, same town) or 3 (different town, still in Bay Area).
 
-### Moved_w23
+**Moved_w23**
 
 **Definition:** Binary indicator (0/1) for any move between survey waves, regardless of distance.
 
