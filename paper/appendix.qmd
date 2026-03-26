@@ -1725,3 +1725,502 @@ plot_grid(grid2, note2, ncol = 1, rel_heights = c(1, 0.1))
 **Definition:** Binary indicator (0/1) for any move between survey waves, regardless of distance.
 
 **Source:** Derived from `a19j` responses 1-5 (any move reported).
+
+## Section 13: Weighted Robustness — Main Results Tables
+
+Tables S23–S26 replicate the four main-text tables using UCNets demographic survey weights (`wt_dem_95_inf` for cross-sectional models; `wt_dem_95_inf_w3`, the person-level wave-3 weight, for fixed effects and first-difference models). The purpose is to verify that results are not driven by differential nonresponse or sampling.
+
+The core findings on network predictors of planning and mobility are robust to weighting. In the planning models (Table S23), distant non-kin remains a significant positive predictor for the whole sample and young adults, though it loses significance among older adults (where power is limited). Local kin retains its negative direction across specifications, remaining significant for young adults. In the mobility models (Table S24), kin in household, distant kin, and distant non-kin all retain their significance and direction for out-of-Bay moves among young adults. Some control variables — notably homeownership and marriage/cohabitation — lose significance with weighting, likely because the demographic reweighting adjusts the sample composition that correlates with these variables. These are controls rather than focal predictors, so this does not threaten the substantive conclusions.
+
+The network consequence models (Tables S25–S26) are more sensitive to weighting, as expected given the limited within-person variation available with only three waves. In the fixed effects models (Table S25), the within-Bay association with local non-kin gains and the out-of-Bay association with distant non-kin gains both lose significance, though the out-of-Bay association with distant kin remains significant. The first-difference models (Table S26) are more stable: the key finding that out-of-Bay movers show declining distant ties one wave later holds with weighting (distant non-kin: -0.676**, distant kin: -0.555*). Overall, the trajectory of network adjustment after moving is consistent across specifications, while the point estimates of immediate network change are less precisely estimated with weights.
+
+```{r wtd-setup}
+library(sandwich)
+library(lmtest)
+library(plm)
+
+data_path <- here("data", "out", "R_DF.rds")
+if (!file.exists(data_path)) data_path <- here("data", "R_DF.rds")
+wtd_data_available <- file.exists(data_path)
+if (wtd_data_available) {
+  df_wtd <- readRDS(data_path)
+  # Drop observations with missing weights
+  df_wtd <- df_wtd %>% filter(!is.na(wt_dem_95_inf) & is.finite(wt_dem_95_inf))
+}
+
+# Shared variable labels
+cs_labels_w <- c(
+  "(Intercept)"        = "Constant",
+  "Kin_within_60_N"    = "Kin within 60 min",
+  "Nonkin_within_60_N" = "Non-kin within 60 min",
+  "Kin_in_HH_N"        = "Kin in Household",
+  "Nonkin_in_HH_N"     = "Non-kin in Household",
+  "Kin_GT_Hour_N"      = "Kin >60 min away",
+  "Nonkin_GT_Hour_N"   = "Non-kin >60 min away",
+  "Owns_home"          = "Home Ownership",
+  "Full_Time"          = "Full-Time Employment",
+  "BA_or_greater"      = "BA or Greater",
+  "Marr_Cohab"         = "Married/Cohabiting",
+  "LE_NewJob"          = "New Job",
+  "LE_NewSchool"       = "New School",
+  "LEX_Birth"          = "Birth of Child",
+  "LE_FinanProb"       = "Financial Problems",
+  "black_race"         = "Black",
+  "asian_race"         = "Asian",
+  "other_race"         = "Other Race",
+  "latino_eth"         = "Latino/a",
+  "female"             = "Female",
+  "age"                = "Age"
+)
+
+# Shared formatting function for flextable styling
+style_table <- function(ft, section_rows, n_row) {
+  ft <- theme_booktabs(ft)
+  ft <- bold(ft, i = section_rows, j = 1, part = "body")
+  if (length(n_row) > 0) {
+    ft <- hline(ft, i = n_row - 1, part = "body", border = fp_border(width = 0.5))
+  }
+  ft <- fontsize(ft, size = 9, part = "all")
+  ft <- font(ft, fontname = "Times New Roman", part = "all")
+  ft <- align(ft, j = 1, align = "left", part = "body")
+  ft <- align(ft, j = -1, align = "center", part = "body")
+  ft <- align(ft, align = "center", part = "header")
+  ft <- bold(ft, part = "header")
+  ft
+}
+
+style_footer <- function(ft, note) {
+  ft <- add_footer_lines(ft, values = note)
+  ft <- fontsize(ft, size = 9, part = "footer")
+  ft <- font(ft, fontname = "Times New Roman", part = "footer")
+  ft <- italic(ft, part = "footer")
+  ft
+}
+```
+
+```{r tbl-s23-plan-weighted, eval=wtd_data_available}
+# ---------------------------------------------------------------------------
+# Table S23: Weighted Table 1 — Plan to Move (LPM)
+# ---------------------------------------------------------------------------
+predictors_w <- c(
+  "Kin_within_60_N", "Nonkin_within_60_N",
+  "Kin_in_HH_N", "Nonkin_in_HH_N",
+  "Kin_GT_Hour_N", "Nonkin_GT_Hour_N",
+  "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+  "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+  "black_race", "asian_race", "other_race", "latino_eth", "female", "age"
+)
+
+formula_w <- paste("Plan_to_Move ~", paste(predictors_w, collapse = " + "), "+ factor(WAVE)")
+all_w <- df_wtd[complete.cases(df_wtd[, c("Plan_to_Move", predictors_w, "prim_key", "agegroup", "WAVE")]), ]
+
+run_lpm_w <- function(data) {
+  fit <- lm(as.formula(formula_w), data = data, weights = wt_dem_95_inf)
+  cl_se <- sqrt(diag(vcovCL(fit, cluster = data$prim_key)))
+  coefs <- coef(fit)
+  t_stats <- coefs / cl_se
+  p_vals <- 2 * pt(abs(t_stats), df = fit$df.residual, lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***",
+           ifelse(p_vals < 0.05, "**",
+           ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = cl_se, stars = stars,
+       n = nobs(fit), n_clusters = n_distinct(data$prim_key),
+       r2 = summary(fit)$r.squared)
+}
+
+mw_all   <- run_lpm_w(all_w)
+mw_young <- run_lpm_w(all_w %>% filter(agegroup == 0))
+mw_old   <- run_lpm_w(all_w %>% filter(agegroup == 1))
+
+fmt_w <- function(m, var) {
+  if (var %in% names(m$coefs)) {
+    sprintf("%.3f%s (%.3f)", m$coefs[var], m$stars[var], m$se[var])
+  } else { "" }
+}
+
+network_w <- c("Kin_within_60_N", "Nonkin_within_60_N", "Kin_in_HH_N",
+               "Nonkin_in_HH_N", "Kin_GT_Hour_N", "Nonkin_GT_Hour_N")
+ses_w <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab")
+events_w <- c("LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb")
+demo_w <- c("black_race", "asian_race", "other_race", "latino_eth", "female", "age")
+ordered_w <- c(network_w, ses_w, events_w, demo_w)
+
+sections_w <- list(
+  list(before = network_w[1], label = "Network Variables"),
+  list(before = ses_w[1],     label = "Socioeconomic Status"),
+  list(before = events_w[1],  label = "Life Events"),
+  list(before = demo_w[1],    label = "Demographics")
+)
+
+rows_w <- list()
+for (var in ordered_w) {
+  for (s in sections_w) {
+    if (var == s$before) {
+      rows_w[[length(rows_w) + 1]] <- data.frame(
+        Variable = s$label, All = "", Young = "", Old = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- ifelse(var %in% names(cs_labels_w), cs_labels_w[var], var)
+  label <- paste0("  ", label)
+  rows_w[[length(rows_w) + 1]] <- data.frame(
+    Variable = label,
+    All   = fmt_w(mw_all, var),
+    Young = fmt_w(mw_young, var),
+    Old   = fmt_w(mw_old, var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_w[[length(rows_w) + 1]] <- data.frame(Variable = "N (person-waves)",
+  All = as.character(mw_all$n), Young = as.character(mw_young$n),
+  Old = as.character(mw_old$n), stringsAsFactors = FALSE, check.names = FALSE)
+rows_w[[length(rows_w) + 1]] <- data.frame(Variable = "N (individuals)",
+  All = as.character(mw_all$n_clusters), Young = as.character(mw_young$n_clusters),
+  Old = as.character(mw_old$n_clusters), stringsAsFactors = FALSE, check.names = FALSE)
+rows_w[[length(rows_w) + 1]] <- data.frame(Variable = "R-squared",
+  All = sprintf("%.3f", mw_all$r2), Young = sprintf("%.3f", mw_young$r2),
+  Old = sprintf("%.3f", mw_old$r2), stringsAsFactors = FALSE, check.names = FALSE)
+
+result_w1 <- do.call(rbind, rows_w)
+sec_w1 <- which(result_w1$Variable %in% c("Network Variables", "Socioeconomic Status",
+                                            "Life Events", "Demographics"))
+n_w1 <- which(result_w1$Variable == "N (person-waves)")
+
+ft_w1 <- flextable(result_w1)
+ft_w1 <- set_header_labels(ft_w1, Variable = "", All = "(1) Whole Sample",
+                            Young = "(2) Young Adults", Old = "(3) Older Adults")
+ft_w1 <- style_table(ft_w1, sec_w1, n_w1)
+ft_w1 <- set_caption(ft_w1, caption = "Table S23. Weighted Predictors of Planning to Move (cf. Table 1)")
+ft_w1 <- style_footer(ft_w1, paste(
+  "Weighted linear probability model with wave fixed effects.",
+  "Demographic survey weights (wt_dem_95_inf) applied.",
+  "Cluster-robust standard errors (by individual) in parentheses.",
+  "This table replicates Table 1 with survey weights to assess robustness.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_w1 <- autofit(ft_w1)
+ft_w1
+```
+
+```{r tbl-s24-mobility-weighted, eval=wtd_data_available}
+# ---------------------------------------------------------------------------
+# Table S24: Weighted Table 2 — Mobility outcomes, young adults (LPM)
+# ---------------------------------------------------------------------------
+young_w <- df_wtd %>% filter(agegroup == 0)
+base_preds_w <- predictors_w
+
+# Model 1: Any Move
+any_fw <- paste("Moved_w23 ~", paste(base_preds_w, collapse = " + "), "+ factor(WAVE)")
+any_dw <- young_w[complete.cases(young_w[, c("Moved_w23", base_preds_w, "prim_key", "WAVE")]), ]
+fit_any_w <- lm(as.formula(any_fw), data = any_dw, weights = wt_dem_95_inf)
+se_any_w <- sqrt(diag(vcovCL(fit_any_w, cluster = any_dw$prim_key)))
+
+# Model 2: Out-of-Bay
+out_fw <- paste("Moved_out_of_Bay_w23 ~", paste(base_preds_w, collapse = " + "), "+ factor(WAVE)")
+out_dw <- young_w[complete.cases(young_w[, c("Moved_out_of_Bay_w23", base_preds_w, "prim_key", "WAVE")]), ]
+fit_out_w <- lm(as.formula(out_fw), data = out_dw, weights = wt_dem_95_inf)
+se_out_w <- sqrt(diag(vcovCL(fit_out_w, cluster = out_dw$prim_key)))
+
+# Model 3: Within-Bay (exclude out-of-Bay movers)
+young_in_w <- young_w %>%
+  filter(Moved_out_of_Bay_w23 != 1 | is.na(Moved_out_of_Bay_w23))
+in_fw <- paste("Moved_in_Bay_w23 ~", paste(base_preds_w, collapse = " + "), "+ factor(WAVE)")
+in_dw <- young_in_w[complete.cases(young_in_w[, c("Moved_in_Bay_w23", base_preds_w, "prim_key", "WAVE")]), ]
+fit_in_w <- lm(as.formula(in_fw), data = in_dw, weights = wt_dem_95_inf)
+se_in_w <- sqrt(diag(vcovCL(fit_in_w, cluster = in_dw$prim_key)))
+
+fmt_cell_w <- function(fit, se, var) {
+  if (!(var %in% names(coef(fit)))) return("")
+  b <- coef(fit)[var]; s <- se[var]
+  p <- 2 * pt(abs(b / s), df = fit$df.residual, lower.tail = FALSE)
+  star <- ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.10, "*", "")))
+  sprintf("%.3f%s (%.3f)", b, star, s)
+}
+
+rows_w2 <- list()
+for (var in ordered_w) {
+  for (s in sections_w) {
+    if (var == s$before) {
+      rows_w2[[length(rows_w2) + 1]] <- data.frame(
+        Variable = s$label, Any = "", Out = "", In = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- ifelse(var %in% names(cs_labels_w), cs_labels_w[var], var)
+  label <- paste0("  ", label)
+  rows_w2[[length(rows_w2) + 1]] <- data.frame(
+    Variable = label,
+    Any = fmt_cell_w(fit_any_w, se_any_w, var),
+    Out = fmt_cell_w(fit_out_w, se_out_w, var),
+    In  = fmt_cell_w(fit_in_w, se_in_w, var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_w2[[length(rows_w2) + 1]] <- data.frame(Variable = "N (person-waves)",
+  Any = as.character(nobs(fit_any_w)),
+  Out = as.character(nobs(fit_out_w)),
+  In  = as.character(nobs(fit_in_w)),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows_w2[[length(rows_w2) + 1]] <- data.frame(Variable = "N (individuals)",
+  Any = as.character(n_distinct(any_dw$prim_key)),
+  Out = as.character(n_distinct(out_dw$prim_key)),
+  In  = as.character(n_distinct(in_dw$prim_key)),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows_w2[[length(rows_w2) + 1]] <- data.frame(Variable = "R-squared",
+  Any = sprintf("%.3f", summary(fit_any_w)$r.squared),
+  Out = sprintf("%.3f", summary(fit_out_w)$r.squared),
+  In  = sprintf("%.3f", summary(fit_in_w)$r.squared),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_w2 <- do.call(rbind, rows_w2)
+sec_w2 <- which(result_w2$Variable %in% c("Network Variables", "Socioeconomic Status",
+                                            "Life Events", "Demographics"))
+n_w2 <- which(result_w2$Variable == "N (person-waves)")
+
+ft_w2 <- flextable(result_w2)
+ft_w2 <- set_header_labels(ft_w2, Variable = "",
+  Any = "(1) Any Move", Out = "(2) Out of Bay", In = "(3) Within Bay")
+ft_w2 <- style_table(ft_w2, sec_w2, n_w2)
+ft_w2 <- set_caption(ft_w2, caption = "Table S24. Weighted Predictors of Residential Mobility, Young Adults (cf. Table 2)")
+ft_w2 <- style_footer(ft_w2, paste(
+  "Weighted linear probability model with wave fixed effects, young adults (ages 21-30) only.",
+  "Demographic survey weights (wt_dem_95_inf) applied.",
+  "Cluster-robust standard errors (by individual) in parentheses.",
+  "Model (1): any move vs. no move. Model (2): out-of-Bay vs. all who remained.",
+  "Model (3): within-Bay movers vs. stayers (out-of-Bay movers excluded).",
+  "This table replicates Table 2 with survey weights to assess robustness.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_w2 <- autofit(ft_w2)
+ft_w2
+```
+
+```{r tbl-s25-fe-weighted, eval=wtd_data_available}
+# ---------------------------------------------------------------------------
+# Table S25: Weighted Table 3 — Network consequences of moving (FE)
+# plm does not support weights directly, so we use lm with individual dummies
+# and weights, which is algebraically equivalent to weighted within-estimator
+# ---------------------------------------------------------------------------
+young_fe_w <- df_wtd %>% filter(agegroup == 0)
+
+net_outcomes_w <- c("Nonkin_within_60_N", "Kin_within_60_N",
+                    "Nonkin_GT_Hour_N", "Kin_GT_Hour_N")
+net_col_labels_w <- c("Local Non-Kin", "Local Kin", "Distant Non-Kin", "Distant Kin")
+
+all_predictors_w <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23",
+                       "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                       "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+                       "Plan_to_Move")
+
+pred_labels_w <- c(
+  "Moved_out_of_Bay_w23" = "Moved Out of Bay",
+  "Moved_in_Bay_w23"     = "Moved Within Bay",
+  "Owns_home"            = "Home Ownership",
+  "Full_Time"            = "Full-Time Employment",
+  "BA_or_greater"        = "BA or Greater",
+  "Marr_Cohab"           = "Married/Cohabiting",
+  "LE_NewJob"            = "New Job",
+  "LE_NewSchool"         = "New School",
+  "LEX_Birth"            = "Birth of Child",
+  "LE_FinanProb"         = "Financial Problems",
+  "Plan_to_Move"         = "Plan to Move"
+)
+
+run_full_fe_w <- function(outcome, predictors, data) {
+  all_vars <- c(outcome, predictors, "prim_key", "WAVE", "wt_dem_95_inf_w3")
+  d <- data[complete.cases(data[, all_vars]), ]
+  # Weighted FE via lm with factor(prim_key)
+  f <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + "),
+                        "+ factor(prim_key)"))
+  fit <- tryCatch(lm(f, data = d, weights = wt_dem_95_inf_w3),
+                  error = function(e) NULL)
+  if (is.null(fit)) return(NULL)
+  rob_se <- sqrt(diag(vcovCL(fit, cluster = d$prim_key)))
+  coefs <- coef(fit)
+  # Keep only predictor coefficients (not individual dummies)
+  keep <- intersect(predictors, names(coefs))
+  coefs <- coefs[keep]
+  rob_se <- rob_se[keep]
+  p_vals <- 2 * pt(abs(coefs / rob_se), df = fit$df.residual, lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***", ifelse(p_vals < 0.05, "**", ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = rob_se, stars = stars,
+       n = nrow(d), n_ind = length(unique(d$prim_key)))
+}
+
+fmt_full_w <- function(model, var) {
+  if (is.null(model) || !(var %in% names(model$coefs))) return("")
+  sprintf("%.3f%s (%.3f)", model$coefs[var], model$stars[var], model$se[var])
+}
+
+models_w <- lapply(net_outcomes_w, function(dv) run_full_fe_w(dv, all_predictors_w, young_fe_w))
+
+move_vars_w <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23")
+control_vars_w <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                     "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move")
+sections_fe_w <- list(
+  list(before = move_vars_w[1], label = "Move Indicators"),
+  list(before = control_vars_w[1], label = "Controls")
+)
+ordered_preds_w <- c(move_vars_w, control_vars_w)
+
+rows_fe_w <- list()
+for (var in ordered_preds_w) {
+  for (s in sections_fe_w) {
+    if (var == s$before) {
+      rows_fe_w[[length(rows_fe_w) + 1]] <- data.frame(
+        Variable = s$label, C1 = "", C2 = "", C3 = "", C4 = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- paste0("  ", pred_labels_w[var])
+  rows_fe_w[[length(rows_fe_w) + 1]] <- data.frame(
+    Variable = label,
+    C1 = fmt_full_w(models_w[[1]], var), C2 = fmt_full_w(models_w[[2]], var),
+    C3 = fmt_full_w(models_w[[3]], var), C4 = fmt_full_w(models_w[[4]], var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_fe_w[[length(rows_fe_w) + 1]] <- data.frame(Variable = "N (person-waves)",
+  C1 = as.character(models_w[[1]]$n), C2 = as.character(models_w[[2]]$n),
+  C3 = as.character(models_w[[3]]$n), C4 = as.character(models_w[[4]]$n),
+  stringsAsFactors = FALSE, check.names = FALSE)
+rows_fe_w[[length(rows_fe_w) + 1]] <- data.frame(Variable = "N (individuals)",
+  C1 = as.character(models_w[[1]]$n_ind), C2 = as.character(models_w[[2]]$n_ind),
+  C3 = as.character(models_w[[3]]$n_ind), C4 = as.character(models_w[[4]]$n_ind),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_fe_w <- do.call(rbind, rows_fe_w)
+sec_fe_w <- which(result_fe_w$Variable %in% c("Move Indicators", "Controls"))
+n_fe_w <- which(result_fe_w$Variable == "N (person-waves)")
+
+ft_fe_w <- flextable(result_fe_w)
+ft_fe_w <- set_header_labels(ft_fe_w, Variable = "",
+  C1 = "(1)", C2 = "(2)", C3 = "(3)", C4 = "(4)")
+ft_fe_w <- add_header_row(ft_fe_w,
+  values = c("", "Local", "Distant"),
+  colwidths = c(1, 2, 2), top = TRUE)
+ft_fe_w <- add_header_row(ft_fe_w,
+  values = c("", net_col_labels_w),
+  colwidths = c(1, 1, 1, 1, 1), top = FALSE)
+ft_fe_w <- style_table(ft_fe_w, sec_fe_w, n_fe_w)
+ft_fe_w <- set_caption(ft_fe_w, caption = "Table S25. Weighted Network Changes Associated with Moving (Fixed Effects, Young Adults; cf. Table 3)")
+ft_fe_w <- style_footer(ft_fe_w, paste(
+  "Weighted individual fixed effects models. Young adults only.",
+  "Demographic survey weights (wt_dem_95_inf_w3, person-level) applied.",
+  "Each column is a separate model with the network variable as the DV.",
+  "Cluster-robust SEs in parentheses.",
+  "This table replicates Table 3 with survey weights to assess robustness.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_fe_w <- autofit(ft_fe_w)
+ft_fe_w
+```
+
+```{r tbl-s26-fd-weighted, eval=wtd_data_available}
+# ---------------------------------------------------------------------------
+# Table S26: Weighted Table 4 — First-difference network changes
+# ---------------------------------------------------------------------------
+w2_w <- df_wtd %>% filter(agegroup == 0, WAVE == 2)
+w3_w <- df_wtd %>% filter(agegroup == 0, WAVE == 3)
+
+fd_w <- inner_join(
+  w2_w %>% select(prim_key, Moved_out_of_Bay_w23, Moved_in_Bay_w23,
+                   Nonkin_within_60_N, Nonkin_GT_Hour_N,
+                   Kin_within_60_N, Kin_GT_Hour_N,
+                   Owns_home, Full_Time, BA_or_greater, Marr_Cohab,
+                   LE_NewJob, LE_NewSchool, LEX_Birth, LE_FinanProb,
+                   Plan_to_Move, wt_dem_95_inf_w3),
+  w3_w %>% select(prim_key,
+                   Nonkin_within_60_N, Nonkin_GT_Hour_N,
+                   Kin_within_60_N, Kin_GT_Hour_N),
+  by = "prim_key", suffix = c("_w2", "_w3")
+) %>%
+  mutate(
+    d_nonkin_local = Nonkin_within_60_N_w3 - Nonkin_within_60_N_w2,
+    d_kin_local    = Kin_within_60_N_w3 - Kin_within_60_N_w2,
+    d_nonkin_dist  = Nonkin_GT_Hour_N_w3 - Nonkin_GT_Hour_N_w2,
+    d_kin_dist     = Kin_GT_Hour_N_w3 - Kin_GT_Hour_N_w2
+  )
+
+fd_dvs_w <- c("d_nonkin_local", "d_kin_local", "d_nonkin_dist", "d_kin_dist")
+fd_col_labels_w <- c("Local Non-Kin", "Local Kin", "Distant Non-Kin", "Distant Kin")
+
+fd_predictors_w <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23",
+                      "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                      "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
+                      "Plan_to_Move")
+
+run_full_fd_w <- function(dv, predictors, data) {
+  f <- as.formula(paste(dv, "~", paste(predictors, collapse = " + ")))
+  d <- data[complete.cases(data[, c(dv, predictors, "prim_key", "wt_dem_95_inf_w3")]), ]
+  d <- d[is.finite(d$wt_dem_95_inf_w3), ]
+  fit <- lm(f, data = d, weights = wt_dem_95_inf_w3)
+  rob_se <- sqrt(diag(vcovCL(fit, cluster = d$prim_key)))
+  coefs <- coef(fit)
+  coefs <- coefs[names(coefs) != "(Intercept)"]
+  rob_se <- rob_se[names(rob_se) != "(Intercept)"]
+  p_vals <- 2 * pt(abs(coefs / rob_se), df = fit$df.residual, lower.tail = FALSE)
+  stars <- ifelse(p_vals < 0.01, "***", ifelse(p_vals < 0.05, "**", ifelse(p_vals < 0.10, "*", "")))
+  list(coefs = coefs, se = rob_se, stars = stars, n = nobs(fit))
+}
+
+fmt_fd_w <- function(model, var) {
+  if (is.null(model) || !(var %in% names(model$coefs))) return("")
+  sprintf("%.3f%s (%.3f)", model$coefs[var], model$stars[var], model$se[var])
+}
+
+fd_models_w <- lapply(fd_dvs_w, function(dv) run_full_fd_w(dv, fd_predictors_w, fd_w))
+
+move_vars_fd_w <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23")
+control_vars_fd_w <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
+                        "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move")
+sections_fd_w <- list(
+  list(before = move_vars_fd_w[1], label = "Move Indicators (wave 2)"),
+  list(before = control_vars_fd_w[1], label = "Controls (wave 2)")
+)
+ordered_fd_w <- c(move_vars_fd_w, control_vars_fd_w)
+
+rows_fd_w <- list()
+for (var in ordered_fd_w) {
+  for (s in sections_fd_w) {
+    if (var == s$before) {
+      rows_fd_w[[length(rows_fd_w) + 1]] <- data.frame(
+        Variable = s$label, C1 = "", C2 = "", C3 = "", C4 = "",
+        stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }
+  label <- paste0("  ", pred_labels_w[var])
+  rows_fd_w[[length(rows_fd_w) + 1]] <- data.frame(
+    Variable = label,
+    C1 = fmt_fd_w(fd_models_w[[1]], var), C2 = fmt_fd_w(fd_models_w[[2]], var),
+    C3 = fmt_fd_w(fd_models_w[[3]], var), C4 = fmt_fd_w(fd_models_w[[4]], var),
+    stringsAsFactors = FALSE, check.names = FALSE)
+}
+rows_fd_w[[length(rows_fd_w) + 1]] <- data.frame(Variable = "N",
+  C1 = as.character(fd_models_w[[1]]$n), C2 = as.character(fd_models_w[[2]]$n),
+  C3 = as.character(fd_models_w[[3]]$n), C4 = as.character(fd_models_w[[4]]$n),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+result_fd_w <- do.call(rbind, rows_fd_w)
+sec_fd_w <- which(result_fd_w$Variable %in% c("Move Indicators (wave 2)", "Controls (wave 2)"))
+n_fd_w <- which(result_fd_w$Variable == "N")
+
+ft_fd_w <- flextable(result_fd_w)
+ft_fd_w <- set_header_labels(ft_fd_w, Variable = "",
+  C1 = "(1)", C2 = "(2)", C3 = "(3)", C4 = "(4)")
+ft_fd_w <- add_header_row(ft_fd_w,
+  values = c("", "Local", "Distant"),
+  colwidths = c(1, 2, 2), top = TRUE)
+ft_fd_w <- add_header_row(ft_fd_w,
+  values = c("", fd_col_labels_w),
+  colwidths = c(1, 1, 1, 1, 1), top = FALSE)
+ft_fd_w <- style_table(ft_fd_w, sec_fd_w, n_fd_w)
+ft_fd_w <- set_caption(ft_fd_w, caption = "Table S26. Weighted Longer-Term Network Changes (First-Difference, Young Adults; cf. Table 4)")
+ft_fd_w <- style_footer(ft_fd_w, paste(
+  "Weighted first-difference models. DV = change in network ties from wave 2 to wave 3.",
+  "IVs = moved between wave 1 and wave 2 + wave-2 controls.",
+  "Demographic survey weights (wt_dem_95_inf_w3, person-level) applied.",
+  "Young adults only. Cluster-robust SEs (by individual) in parentheses.",
+  "This table replicates Table 4 with survey weights to assess robustness.",
+  "* p < 0.10, ** p < 0.05, *** p < 0.01."
+))
+ft_fd_w <- autofit(ft_fd_w)
+ft_fd_w
+```

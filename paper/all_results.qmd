@@ -666,7 +666,7 @@ net_col_labels <- c("Local Non-Kin", "Local Kin", "Distant Non-Kin", "Distant Ki
 all_predictors <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23",
                      "Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
                      "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb",
-                     "Plan_to_Move")
+                     "Plan_to_Move", "web")
 
 pred_labels <- c(
   "Moved_out_of_Bay_w23" = "Moved Out of Bay",
@@ -679,7 +679,8 @@ pred_labels <- c(
   "LE_NewSchool"         = "New School",
   "LEX_Birth"            = "Birth of Child",
   "LE_FinanProb"         = "Financial Problems",
-  "Plan_to_Move"         = "Plan to Move"
+  "Plan_to_Move"         = "Plan to Move",
+  "web"                  = "Web Survey Mode"
 )
 
 # Run full FE model, return all coefficients
@@ -712,7 +713,7 @@ models <- lapply(net_outcomes, function(dv) run_full_fe(dv, all_predictors, youn
 # Build table
 move_vars <- c("Moved_out_of_Bay_w23", "Moved_in_Bay_w23")
 control_vars <- c("Owns_home", "Full_Time", "BA_or_greater", "Marr_Cohab",
-                   "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move")
+                   "LE_NewJob", "LE_NewSchool", "LEX_Birth", "LE_FinanProb", "Plan_to_Move", "web")
 sections_fe <- list(
   list(before = move_vars[1], label = "Move Indicators"),
   list(before = control_vars[1], label = "Controls")
@@ -784,7 +785,7 @@ ft_fe <- autofit(ft_fe)
 ft_fe
 ```
 
-Table 3 shows that moving within the Bay Area is associated with having 0.52 more local non-kin ties in the post-move period relative to the same person's non-move waves, suggesting that local moves may place young adults in contexts where they accumulate new friendships. Moving out of the Bay Area tells a different story: out-of-Bay movers show significantly more kin and non-kin ties at distances greater than 60 minutes, consistent with the interpretation that young people who leave the region are moving away from their existing local family and friends, who then become distant ties.
+Table 3 shows that moving within the Bay Area is associated with more local non-kin ties in the post-move period relative to the same person's non-move waves, suggesting that local moves may place young adults in contexts where they accumulate new friendships, though this estimate is sensitive to specification (Appendix Table S25). Moving out of the Bay Area tells a different story: out-of-Bay movers show more kin ties at distances greater than 60 minutes, consistent with the interpretation that young people who leave the region are moving away from their existing local family, who then become distant ties. The pattern for distant non-kin points in the same direction but is less robust to alternative specifications.
 
 We tested whether these network consequences differ by stated move reason (career, partner, financial, housing) using interaction terms within the same fixed effects framework. None of the interactions were significant, indicating that the network disruption associated with moving is similar regardless of why the person moved (Appendix Table S22). Whether a young adult leaves the Bay Area for a career opportunity or for housing reasons, the effect on their network geography is comparable.
 

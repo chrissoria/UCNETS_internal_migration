@@ -1,46 +1,282 @@
 ---
 title: "Methods"
-format: pdf
+format: docx
 bibliography: "Fixed and Hybrid Effects Models.bib"
+editor: visual
 ---
 
-# Methods
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(here)
+library(flextable)
+library(dplyr)
+library(tidyr)
+library(officer)
 
-## Data
+set_flextable_defaults(
+  font.family = "Times New Roman",
+  font.size = 10,
+  padding.top = 1,
+  padding.bottom = 1
+)
+```
 
-## Measures
+# Data and Methods
 
-### Outcome Variables
+## The UCNets Study
 
-### Network Variables
+We use data from the UC Berkeley Social Networks Study (UCNets). UCNets surveyed 1,159 respondents living in the San Francisco Bay Area across two age cohorts—young adults aged 21–30 and older adults aged 50–70—three times between 2015 and 2018 using a combination of in-person and online methods. The study was designed to draw egocentric maps of respondents' personal networks and to collect detailed information about their social connections, socioeconomic circumstances, and health.
 
-### Control Variables
+The panel structure yields up to three observations per respondent and up to two inter-wave transitions during which residential mobility can occur. The unit of analysis is the person-wave: one row per respondent per survey wave. We focus on moves that occurred within the study period. After listwise deletion on key analysis variables, sample sizes range from approximately 680 to 3,100 person-waves depending on the model specification, with the smaller samples reflecting the restriction to waves 2–3 when lagged predictors are required. All analyses are unweighted. UCNets provides demographic survey weights, but our panel models rely on within-person variation that is not improved by cross-sectional reweighting. Weighted robustness checks are reported in Appendix Section 13.
+
+## Moving-Related Questions in the Survey
+
+At each wave, respondents were asked whether they had moved since the last interview and, if so, whether within the Bay Area or out of the region. Respondents who moved were also asked an open-ended question about why they moved ("Why did you move?"), which we coded into categories (described in the Results). Separately, respondents were asked whether they planned to move before the next interview, providing a prospective measure of mobility intentions that can be compared to actual subsequent behavior.
+
+## Outcome Variables
+
+We examine three sets of outcomes. First, for the analysis of who moves and where, we use binary indicators of *planning to move* at a given wave, *moving out of the Bay Area* between consecutive waves, and *moving within the Bay Area* between waves. For within-Bay models, we exclude respondents who moved out of the region so that the comparison is between local movers and stayers only.
+
+Second, for the analysis of self-reported reasons for moving, we use the coded open-ended responses. The categorization process involved multiple steps: a large language model scanned responses to suggest preliminary categories, which were then refined through manual analysis and review of existing literature. Multiple coders, including the authors, categorized the data, allowing for multiple categories per response. The authors conducted manual reviews to ensure accuracy. The resulting categories include career (own or partner's job/school), partner/relationship, financial, housing, new environment, family/friends, conflict/forced, and other.
+
+Third, for the analysis of moving's network consequences, we use network count variables as outcomes: local non-kin (within 60 minutes), local kin, distant non-kin (more than 60 minutes away), and distant kin. These are the same network measures described below, but treated as dependent variables rather than predictors.
+
+## Predictor Variables
+
+Network data were collected through name generator questions in which respondents identified their social ties and reported the geographic proximity of each alter. We construct counts of kin and non-kin ties at three distance thresholds: *household* (living in the respondent's home; non-kin household ties primarily reflect roommates among young adults), *local* (within 60 minutes), and *distant* (more than 60 minutes away). This yields six network variables—kin and non-kin at each of three distances—all measured as counts that vary across waves.^[These count variables are right-skewed, but we retain untransformed counts for interpretability; results are substantively unchanged with winsorization.]
+
+Time-varying socioeconomic controls include homeownership, full-time employment, education (BA or higher vs. less than BA), and marital/cohabitation status. Life events are binary indicators for experiences since the prior interview: starting a new job, enrolling in school, experiencing financial problems, and having a child. We also include a lagged indicator of whether a close contact moved away.
+
+Time-invariant controls include gender, race/ethnicity (Black, Asian, Latino/a, and other race, with white as the reference), and age. Survey mode (online vs. in-person) is included as a between-person control.
+
+## Descriptive Overview
+
+```{r desc-stats, include=FALSE}
+# Compute all descriptive stats used in the narrative text
+data_path <- here("data", "out", "R_DF.rds")
+if (!file.exists(data_path)) data_path <- here("data", "R_DF.rds")
+df_raw <- readRDS(data_path)
+
+pf <- function(x) sprintf("%.1f", 100 * mean(x, na.rm = TRUE))
+
+y <- df_raw %>% filter(agegroup == 0)
+o <- df_raw %>% filter(agegroup == 1)
+
+# Move rates
+y_within  <- pf(y$Moved_in_Bay_w23)
+y_out     <- pf(y$Moved_out_of_Bay_w23)
+o_within  <- pf(o$Moved_in_Bay_w23)
+o_out     <- pf(o$Moved_out_of_Bay_w23)
+y_plan    <- pf(y$Plan_to_Move)
+o_plan    <- pf(o$Plan_to_Move)
+
+# Young subgroups
+y_stay <- y %>% filter(Moved_out_of_Bay_w23 == 0 & Moved_in_Bay_w23 == 0)
+y_local <- y %>% filter(Moved_in_Bay_w23 == 1)
+y_dist <- y %>% filter(Moved_out_of_Bay_w23 == 1)
+
+y_dist_ba    <- pf(y_dist$BA_or_greater)
+y_stay_ba    <- pf(y_stay$BA_or_greater)
+y_dist_own   <- pf(y_dist$Owns_home)
+y_stay_own   <- pf(y_stay$Owns_home)
+y_dist_marr  <- pf(y_dist$Marr_Cohab)
+y_stay_marr  <- pf(y_stay$Marr_Cohab)
+y_local_ba   <- pf(y_local$BA_or_greater)
+y_local_ft   <- pf(y_local$Full_Time)
+y_stay_ft    <- pf(y_stay$Full_Time)
+y_local_marr <- pf(y_local$Marr_Cohab)
+
+# Old subgroups
+o_stay <- o %>% filter(Moved_out_of_Bay_w23 == 0 & Moved_in_Bay_w23 == 0)
+o_local <- o %>% filter(Moved_in_Bay_w23 == 1)
+o_dist <- o %>% filter(Moved_out_of_Bay_w23 == 1)
+
+o_dist_marr  <- pf(o_dist$Marr_Cohab)
+o_local_blk  <- pf(o_local$black_race)
+o_local_own  <- pf(o_local$Owns_home)
+o_stay_own   <- pf(o_stay$Owns_home)
+
+# Life events (young)
+y_newjob  <- pf(y$LE_NewJob)
+y_finprob <- pf(y$LE_FinanProb)
+```
+
+Table 1 presents sample characteristics by mobility status and age group. Mobility is far more common among young adults: `r y_within`% of young adult person-waves involve a within-Bay move and `r y_out`% an out-of-Bay move, compared to `r o_within`% and `r o_out`% among older adults. Planning to move is similarly concentrated among the young (`r y_plan`% vs. `r o_plan`%).
+
+Among young adults, out-of-Bay movers are notably more educated (`r y_dist_ba`% BA or higher vs. `r y_stay_ba`% of stayers), less likely to be homeowners (`r y_dist_own`% vs. `r y_stay_own`%), and more likely to be married or cohabiting (`r y_dist_marr`% vs. `r y_stay_marr`%). Within-Bay movers show a sharper education gradient (`r y_local_ba`% BA+), higher rates of full-time employment (`r y_local_ft`% vs. `r y_stay_ft`%), and substantially higher marriage/cohabitation rates (`r y_local_marr`% vs. `r y_stay_marr`%). Among older adults, the small number of movers limits inference, but out-of-Bay movers are disproportionately married (`r o_dist_marr`%) while within-Bay movers are disproportionately Black (`r o_local_blk`%) and less likely to be homeowners (`r o_local_own`% vs. `r o_stay_own`%).
+
+Life events also differ by mover status. New jobs are reported in `r y_newjob`% of young adult person-waves and financial problems in `r y_finprob`%, rates that are higher among movers in both age groups. Network variables show that young adults have more non-kin household ties (reflecting roommates) and more distant non-kin, while older adults have more local kin. These distributions motivate the regression analyses that follow.
+
+```{r tbl-descriptive, eval=TRUE}
+# ---------------------------------------------------------------------------
+# Descriptive Table: Sample Characteristics by Move Status × Age Group
+# Three-category move typology: Non-mover / Local Mover / Distant Mover
+# ---------------------------------------------------------------------------
+data_path <- here("data", "out", "R_DF.rds")
+if (!file.exists(data_path)) data_path <- here("data", "R_DF.rds")
+
+if (file.exists(data_path)) {
+  df_raw <- readRDS(data_path)
+
+  # Create three-category move variable
+  df_desc <- df_raw %>%
+    mutate(
+      move_status = case_when(
+        Moved_out_of_Bay_w23 == 1 ~ "Out of Bay",
+        Moved_in_Bay_w23 == 1     ~ "Within Bay",
+        TRUE                      ~ "Non-Mover"
+      ),
+      agegroup_label = ifelse(agegroup == 0, "Young", "Old")
+    )
+
+  # Helper: format n (%)
+  fmt_pct <- function(x, n) {
+    sprintf("%.1f%%", 100 * mean(x, na.rm = TRUE))
+  }
+  fmt_mean_sd <- function(x) {
+    sprintf("%.1f (%.1f)", mean(x, na.rm = TRUE), sd(x, na.rm = TRUE))
+  }
+
+  # Build one column of the table
+  build_col <- function(data) {
+    n <- nrow(data)
+    c(
+      # Demographics
+      fmt_pct(data$female),
+      fmt_mean_sd(data$age),
+      fmt_pct(data$black_race),
+      fmt_pct(data$asian_race),
+      fmt_pct(data$latino_eth),
+      # SES
+      fmt_pct(data$BA_or_greater),
+      fmt_pct(data$Owns_home),
+      fmt_pct(data$Full_Time),
+      fmt_pct(data$Marr_Cohab),
+      # Life events
+      fmt_pct(data$LE_NewJob),
+      fmt_pct(data$LE_NewSchool),
+      fmt_pct(data$LE_FinanProb),
+      fmt_pct(data$LEX_Birth),
+      # Network
+      fmt_mean_sd(data$Kin_in_HH_N),
+      fmt_mean_sd(data$Kin_within_60_N),
+      fmt_mean_sd(data$Kin_GT_Hour_N),
+      fmt_mean_sd(data$Nonkin_in_HH_N),
+      fmt_mean_sd(data$Nonkin_within_60_N),
+      fmt_mean_sd(data$Nonkin_GT_Hour_N),
+      # N
+      as.character(n)
+    )
+  }
+
+  var_names <- c(
+    "Female (%)", "Age (mean, SD)",
+    "Black (%)", "Asian (%)", "Latino/a (%)",
+    "BA or Higher (%)", "Homeowner (%)",
+    "Full-Time Employed (%)", "Married/Cohabiting (%)",
+    "New Job (%)", "New School (%)",
+    "Financial Problems (%)", "Birth of Child (%)",
+    "Kin in Household", "Kin within 60 min",
+    "Kin >60 min", "Non-kin in Household",
+    "Non-kin within 60 min", "Non-kin >60 min",
+    "N (person-waves)"
+  )
+
+  # Section headers
+  section_labels <- c("Demographics", "Socioeconomic Status",
+                       "Life Events", "Network Variables (mean, SD)")
+
+  # Build columns for each age × move group
+  y_non   <- build_col(df_desc %>% filter(agegroup == 0, move_status == "Non-Mover"))
+  y_local <- build_col(df_desc %>% filter(agegroup == 0, move_status == "Within Bay"))
+  y_dist  <- build_col(df_desc %>% filter(agegroup == 0, move_status == "Out of Bay"))
+  o_non   <- build_col(df_desc %>% filter(agegroup == 1, move_status == "Non-Mover"))
+  o_local <- build_col(df_desc %>% filter(agegroup == 1, move_status == "Within Bay"))
+  o_dist  <- build_col(df_desc %>% filter(agegroup == 1, move_status == "Out of Bay"))
+
+  # Assemble with section headers
+  rows <- list()
+  for (i in seq_along(var_names)) {
+    # Insert section headers
+    if (i == 1) {
+      rows[[length(rows) + 1]] <- c(section_labels[1],
+        rep("", 6))
+    }
+    if (i == 6) {
+      rows[[length(rows) + 1]] <- c(section_labels[2],
+        rep("", 6))
+    }
+    if (i == 10) {
+      rows[[length(rows) + 1]] <- c(section_labels[3],
+        rep("", 6))
+    }
+    if (i == 14) {
+      rows[[length(rows) + 1]] <- c(section_labels[4],
+        rep("", 6))
+    }
+    rows[[length(rows) + 1]] <- c(
+      paste0("  ", var_names[i]),
+      y_non[i], y_local[i], y_dist[i],
+      o_non[i], o_local[i], o_dist[i]
+    )
+  }
+
+  tbl <- as.data.frame(do.call(rbind, rows), stringsAsFactors = FALSE)
+  names(tbl) <- c("Variable", "YN", "YL", "YD", "ON", "OL", "OD")
+
+  sec_rows <- which(tbl$Variable %in% section_labels)
+  n_row <- which(grepl("N \\(person", tbl$Variable))
+
+  ft <- flextable(tbl)
+  ft <- set_header_labels(ft, Variable = "",
+    YN = "Non-Mover", YL = "Local", YD = "Distant",
+    ON = "Non-Mover", OL = "Local", OD = "Distant")
+  ft <- add_header_row(ft,
+    values = c("", "Young Adults (21-30)", "Older Adults (50-70)"),
+    colwidths = c(1, 3, 3), top = TRUE)
+  ft <- theme_booktabs(ft)
+  ft <- bold(ft, i = sec_rows, j = 1, part = "body")
+  if (length(n_row) > 0) {
+    ft <- hline(ft, i = n_row - 1, part = "body",
+                border = fp_border(width = 0.5))
+  }
+  ft <- fontsize(ft, size = 9, part = "all")
+  ft <- font(ft, fontname = "Times New Roman", part = "all")
+  ft <- align(ft, j = 1, align = "left", part = "body")
+  ft <- align(ft, j = -1, align = "center", part = "body")
+  ft <- align(ft, align = "center", part = "header")
+  ft <- bold(ft, part = "header")
+  ft <- set_caption(ft, caption = "Table 1. Sample Characteristics by Mobility Status and Age Group (Observation-Level)")
+  ft <- add_footer_lines(ft, values = paste(
+    "Observation-level: each person-wave is one row.",
+    "Local = moved within the Bay Area; Distant = moved out of the Bay Area.",
+    "Network variables are counts of alters at each distance band.",
+    "Percentages for binary variables; mean (SD) for continuous variables."
+  ))
+  ft <- fontsize(ft, size = 9, part = "footer")
+  ft <- font(ft, fontname = "Times New Roman", part = "footer")
+  ft <- italic(ft, part = "footer")
+  ft <- autofit(ft)
+  ft
+}
+```
 
 ## Analytical Strategy
 
-We estimate the determinants of residential mobility using a hybrid between-within (BW) panel model, also known as a "hybrid effects" or "correlated random effects" model [@allison_fixed_2009; @neuhaus_between-_1998]. This approach decomposes time-varying predictors into two components: between-person means (capturing stable individual differences) and within-person deviations from those means (capturing change over time) [@neuhaus_separating_2006]. The model takes the form:
+### Who Plans to Move and Who Moves
 
-$$
-y_{it} = \alpha + \beta_W (x_{it} - \bar{x}_i) + \beta_B \bar{x}_i + \gamma z_i + u_i + \epsilon_{it}
-$$
+For the analysis of planning and mobility, we estimate cross-sectional linear probability models (LPM) that pool observations across all waves, with wave fixed effects and cluster-robust standard errors by individual to account for repeated observations. Although logistic regression is conventional for binary outcomes, LPM offers more straightforward interpretation of coefficients as changes in probability [@brumback_adjusting_2010]. These models address the question of what characteristics distinguish planners and movers from non-planners and stayers. We also report hybrid between-within panel models in the appendix as a robustness check, decomposing predictors into between-person and within-person components [@allison_fixed_2009; @neuhaus_between-_1998].
 
-where $y_{it}$ is the binary mobility outcome for individual $i$ at wave $t$, $(x_{it} - \bar{x}_i)$ represents within-person deviations from the individual mean, $\bar{x}_i$ is the individual's mean across all observed waves (the between-person component), $z_i$ captures time-invariant characteristics, $u_i$ is the individual-specific random effect, and $\epsilon_{it}$ is the idiosyncratic error term.
+### Network Consequences of Moving
 
-The within-person coefficient $\beta_W$ estimates the effect of change in a predictor on mobility, holding constant all stable individual characteristics. For linear models, this coefficient is algebraically equivalent to what would be obtained from a strict fixed effects specification [@allison_fixed_2009]. The between-person coefficient $\beta_B$ captures cross-sectional associations but does not have the same causal interpretation as the within-person estimate.
+To estimate how moving affects networks, we use individual fixed effects models with network counts as dependent variables and move indicators (within-Bay, out-of-Bay) as predictors. Because respondents reported whether they moved *since the last interview* before their current network was measured, the move necessarily precedes the network measurement within each wave, establishing temporal ordering. All time-invariant individual characteristics are absorbed by the fixed effect, so coefficients represent within-person changes in network composition associated with having moved. These models include survey mode (web vs. in-person) as a time-varying control, because respondents who moved out of the Bay Area could no longer participate in person and nearly all switched to web administration; controlling for mode ensures that apparent network changes after an out-of-Bay move do not simply reflect differences in how networks are reported online. We also estimate first-difference models to examine longer-term adjustment: whether network changes observed immediately after a move persist, stabilize, or reverse one wave later.
 
-This hybrid approach offers several advantages over strict fixed effects. First, it allows us to estimate effects of time-invariant characteristics (e.g., race, gender) that would otherwise be absorbed. Second, it provides explicit between-person estimates that can be compared to within-person effects, offering insight into whether cross-sectional patterns reflect causal processes or confounding by stable individual differences. Third, it retains the key identification strategy of fixed effects—using within-person variation to control for unobserved heterogeneity—while providing a richer set of estimates.
+### Sample Strategy
 
-### Model Specification
-
-We estimate linear probability models (LPM) with the hybrid specification. Although logistic regression is conventional for binary outcomes, LPM offers more straightforward interpretation of coefficients as changes in probability. For the hybrid model specifically, LPM also avoids the inconsistency issues that can arise with logistic between-within specifications [@neuhaus_between-_1998; @goetgeluk_conditional_2008]. We use cluster-robust standard errors to address heteroskedasticity inherent in LPM and account for repeated observations within individuals [@brumback_adjusting_2010].
-
-### Addressing Simultaneity
-
-For network variables where reverse causality is a concern—the possibility that mobility causes network change rather than the reverse—we lag predictors by one wave [@allison_fixed_2005]. This ensures that network characteristics measured at wave $t-1$ predict mobility observed at wave $t$, establishing temporal precedence. While lagging does not eliminate all endogeneity concerns, it rules out the interpretation that observed mobility caused the measured network change.
+We run parallel analyses for young and older adults when the analysis concerns the full sample—who plans to move, who moves where, and the plan-action gap. For analyses conducted within the subset of movers—self-reported reasons for moving, network consequences of moving—we focus on young adults in the main text because that is where the majority of movers are, and present the older adult results in an appendix. This approach balances the goal of age-group comparison against the statistical power constraints imposed by the low mobility rate among older adults.
 
 ### Sample and Transitions
 
-The panel includes three waves of data, yielding up to two potential transitions per individual (wave 1 to 2, wave 2 to 3). We pool transitions across waves, assuming the same underlying process governs mobility decisions at each transition. This pooled approach increases statistical power and allows estimation of wave effects to capture any period-specific factors.
+The panel includes three waves of data, yielding up to two potential transitions per individual (wave 1 to 2, wave 2 to 3). We pool transitions across waves, with wave fixed effects to capture any period-specific factors. For models requiring lagged predictors, only the wave 2–3 transition is available (since the lag at wave 1 is undefined), reducing the effective sample.
 
 ## References
-
