@@ -11,6 +11,7 @@ library(dplyr)
 library(tidyr)
 library(officer)
 library(sandwich)
+library(ggplot2)
 
 set_flextable_defaults(
   font.family = "Times New Roman",
@@ -211,9 +212,11 @@ if (data_available) df_raw <- readRDS(data_path)
 
 # Appendix
 
-## Section 1: Planners
+## Appendix A: Planning and Mobility
 
-Table S1 shows the characteristics of planners vs. non-planners by age group. Among young adults, planners are less likely to be homeowners (17% vs. 22%) or married (32% vs. 44%), and have more distant non-kin (2.2 vs. 1.7). Among older adults, the homeownership gap is larger (45% vs. 75%), and planners have fewer local kin (1.3 vs. 1.6) but more distant non-kin (1.7 vs. 1.1). Table S2 uses a panel model to test whether within-person changes predict changes in planning. For young adults, gaining local non-kin is associated with increased planning, and homeownership consistently reduces planning in both age groups. These patterns are consistent with the main-text Table 1 findings.
+### A.1 Planner Characteristics and Panel Model
+
+Table S1 compares planners and non-planners by age group. Among young adults, planners are less likely to be homeowners (17% vs. 22%) or married (32% vs. 44%) and have more distant non-kin (2.2 vs. 1.7). Among older adults, the homeownership gap is larger (45% vs. 75%), and planners have fewer local kin (1.3 vs. 1.6) but more distant non-kin (1.7 vs. 1.1). Table S2 uses a panel model to test whether within-person changes in these variables predict changes in planning. For young adults, gaining local non-kin is associated with increased planning, and homeownership reduces planning in both age groups. These patterns are consistent with Table 1.
 
 ```{r tbl-plan-cross-sectional, eval=data_available}
 plan_by_status <- df_raw %>%
@@ -283,9 +286,9 @@ make_table(
 )
 ```
 
-## Section 2: Who Moves?
+### A.2 Mobility: Plan Confounding and Hybrid Between-Within Models
 
-Table S3 adds Plan to Move to the mobility models. It is not significant (p > 0.15 in both), and other coefficients do not change, so planning does not confound the main results. Tables S4 and S5 show hybrid between-within panel models for out-of-Bay and within-Bay moves. For out-of-Bay moves among young adults (Table S4), the strongest within-person predictors are prior move (-0.211), kin in household (0.065), and internet use between-person (0.094). For within-Bay moves (Table S5), becoming a homeowner reduces local mobility (-0.289), financial problems increase it (0.158), and marriage reduces it (-0.196). Lagged Plan to Move is significant for within-Bay moves (0.322) but not out-of-Bay, suggesting planning is more relevant for local relocation decisions.
+Table S3 adds Plan to Move to the mobility models. It is not significant (p > 0.15 in both), and other coefficients do not change, so planning does not confound the main results. Tables S4 and S5 show hybrid between-within panel models for out-of-Bay and within-Bay moves. For out-of-Bay moves among young adults (Table S4), the strongest within-person predictors are prior move (-0.211), kin in household (0.065), and internet use between-person (0.094). For within-Bay moves (Table S5), becoming a homeowner reduces local mobility (-0.289), financial problems increase it (0.158), and marriage reduces it (-0.196). Lagged Plan to Move is significant for within-Bay moves (0.322) but not out-of-Bay.
 
 ```{r tbl-mobility-lpm-appendix, eval=data_available}
 # ---------------------------------------------------------------------------
@@ -486,9 +489,9 @@ make_table(
 )
 ```
 
-## Section 3: Robustness — Controlling for Prior Move (Waves 2-3 Only)
+### A.3 Robustness: Controlling for Prior Move (Waves 2-3 Only)
 
-Table S6 adds a lagged move indicator (moved prior wave) to the Plan to Move model. This drops all wave 1 observations (N falls from 3,114 to 1,962). The lagged move coefficient itself is not significant (0.041, p = 0.14). The key predictors from Table 1 remain stable: local kin still reduces planning (-0.010, p < 0.05) and homeownership remains the strongest negative predictor (-0.082, p < 0.01). Distant non-kin loses significance in this smaller sample (0.008, ns), likely due to reduced power rather than a substantive change.
+Table S6 adds a lagged move indicator (moved prior wave) to the Plan to Move model. This drops all wave 1 observations (N falls from 3,114 to 1,962). The lagged move coefficient is not significant (0.041, p = 0.14). The key predictors from Table 1 remain stable: local kin still reduces planning (-0.010, p < 0.05) and homeownership remains the strongest negative predictor (-0.082, p < 0.01). Distant non-kin loses significance in this smaller sample (0.008, ns), likely reflecting reduced power.
 
 ```{r tbl-plan-lag-move-app, eval=data_available}
 # Table 1 variant with lag_Moved_Town
@@ -611,9 +614,9 @@ ft_l <- autofit(ft_l)
 ft_l
 ```
 
-## Section 4: Does Planning Mediate the Network-Mobility Link?
+### A.4 Does Planning Mediate the Network-Mobility Link?
 
-Table S7 tests whether planning mediates the network-mobility link using the mediation package. For out-of-Bay moves, the only network variable with a significant total effect is distant non-kin (0.022, p < 0.01), and planning mediates less than 1% of it. Local kin has a significant direct effect (-0.022, p = 0.02) but the indirect path through planning is not significant. For within-Bay moves, none of the network effects are significant. Table S8 shows coefficient attenuation: adding Plan to Move reduces the local kin coefficient by 30% and the distant kin coefficient by 39%, but neither indirect effect reaches significance. Overall, networks operate on mobility through channels other than conscious planning.
+Table S7 tests whether planning mediates the association between networks and mobility. For out-of-Bay moves, the only network variable with a significant total effect is distant non-kin (0.022, p < 0.01), and planning mediates less than 1% of it. Local kin has a significant direct effect (-0.022, p = 0.02) but the indirect path through planning is not significant. For within-Bay moves, none of the network effects are significant. Table S8 shows coefficient attenuation: adding Plan to Move reduces the local kin coefficient by 30% and the distant kin coefficient by 39%, but neither indirect effect reaches significance. Planning does not appear to be a primary pathway linking networks to mobility.
 
 ```{r tbl-mediation-summary}
 # Mediation summary from script 13 (mediation package, quasi-Bayesian MC)
@@ -683,9 +686,9 @@ make_simple_table(
 )
 ```
 
-## Section 5: The Plan-Action Gap
+### A.5 The Plan-Action Gap
 
-Tables S9-S13 look at planning vs. actual moves. Table S9 shows 72% of young planners follow through vs. 40% of older planners. Among young planners who do move, 47% stay within the Bay and 31% leave. Tables S10-S12 break down follow-through and stuck rates by demographics. Full-time employed young adults have the highest follow-through (75%) and married young adults are close behind (76%). Among older adults, rates are lower across all groups (39-45%). Table S13 compares move reasons: planned movers cite conflict more often (17% vs. 13%), while unplanned movers cite partner reasons more (17% vs. 9%). Career is the top reason for both groups (32% planned, 30% unplanned). About 40% of all moves happen without prior stated intention.
+Tables S9-S13 compare planning to actual moves. Table S9 shows 72% of young planners follow through vs. 40% of older planners. Among young planners who move, 47% stay within the Bay and 31% leave. Tables S10-S12 break down follow-through and stuck rates by demographics. Full-time employed young adults have the highest follow-through (75%) and married young adults are close behind (76%). Among older adults, rates are lower across all groups (39-45%). Table S13 compares move reasons: planned movers cite conflict more often (17% vs. 13%), while unplanned movers cite partner reasons more (17% vs. 9%). Career is the top reason for both groups (32% planned, 30% unplanned). About 40% of all moves occur without prior stated intention.
 
 ```{r tbl-planner-destinations}
 destinations <- data.frame(
@@ -806,9 +809,11 @@ make_simple_table(
 )
 ```
 
-## Section 6: Move Reasons by Demographic Group (Young Adults)
+## Appendix B: Move Reasons
 
-Table S14 shows move reasons by subgroup for young movers. Men and women cite career at similar rates (37% vs. 34%), but women cite conflict twice as often (16% vs. 8%). Among movers who got a new job, only 44% cite career as the reason; 27% of movers without a new job also cite career. Movers with above-average distant kin cite career more (40% vs. 30%) and family less (6% vs. 11%), and the same pattern holds for distant non-kin (43% vs. 28% career). Tables S15-S17 show mean network sizes by reason and the older adult versions.
+### B.1 Move Reasons by Demographic Group (Young Adults)
+
+Table S14 shows move reasons by subgroup for young movers. Men and women cite career at similar rates (37% vs. 34%), but women cite conflict twice as often (16% vs. 8%). Among movers who got a new job, only 44% cite career as the reason; 27% of movers without a new job also cite career. Movers with above-average distant kin cite career more often (40% vs. 30%) and family less often (6% vs. 11%). The same pattern holds for distant non-kin (43% vs. 28% career). Tables S15-S17 show mean network sizes by reason, including older adult results.
 
 ```{r tbl-reasons-by-demo, eval=data_available}
 # Move reasons as columns, demographic subgroups as rows
@@ -906,7 +911,7 @@ ft_d <- autofit(ft_d)
 ft_d
 ```
 
-## Section 6b: Move Reasons and Networks
+### B.2 Move Reasons and Networks
 
 ```{r tbl-reasons-network-young, eval=data_available}
 # Network size by reason -- young adults
@@ -1076,155 +1081,11 @@ make_simple_table(
 )
 ```
 
-## Section 7: Psychological Distress (Additional)
+## Appendix C: Network Consequences of Moving
 
-Tables S18-S19 and Figure S1 show well-being by plan-action category. Stable non-movers report the highest well-being (4.05 on the 1-5 scale). Planned movers report the lowest (3.68), followed by unplanned movers (3.74) and stuck planners (3.82). Among young adults (Table S19), the differences are smaller: stable (3.75), stuck (3.72), unplanned (3.67), planned movers (3.66). The gap between movers and non-movers is wider for older adults, where stable non-movers average 4.16.
+### C.1 Do Network Consequences Differ by Move Reason?
 
-```{r tbl-distress-app}
-distress <- data.frame(
-  Category = c("Stable (No Plan, No Move)", "Planned but Stuck",
-               "Unplanned Mover", "Planned & Moved"),
-  N    = c(2014, 279, 409, 169),
-  Mean = c("1.90", "2.13", "2.23", "2.28"),
-  SD   = c("0.605", "0.669", "0.652", "0.644"),
-  Suicide = c("4.3%", "7.5%", "9.0%", "10.7%"),
-  stringsAsFactors = FALSE, check.names = FALSE
-)
-
-make_simple_table(
-  distress,
-  caption = "Table S18. Psychological Distress by Plan-Action Category (Observation-Level)",
-  note = paste(
-    "Distress index: 10-item h16 scale, range 1-5 (higher = more distress).",
-    "Suicide ideation: h17, thought about taking own life in past 30 days.",
-    "Observation-level: each person-wave is one observation."
-  ),
-  col_labels = list(Category = "", N = "N", Mean = "Mean Distress",
-                    SD = "SD", Suicide = "% Suicide Ideation")
-)
-```
-
-```{r fig-distress-app}
-#| fig-width: 7
-#| fig-height: 4.5
-#| fig-cap: "Figure S1. Psychological Distress by Plan-Action Category"
-
-library(ggplot2)
-
-distress_plot <- data.frame(
-  Category = c("Stable", "Planned\nbut Stuck", "Unplanned\nMover", "Planned\n& Moved"),
-  Mean = c(1.90, 2.134, 2.226, 2.277),
-  SE   = c(0.605 / sqrt(2014), 0.669 / sqrt(279),
-           0.652 / sqrt(409),  0.644 / sqrt(169)),
-  N    = c(2014, 279, 409, 169),
-  stringsAsFactors = FALSE
-)
-distress_plot$Category <- factor(distress_plot$Category,
-  levels = c("Stable", "Planned\nbut Stuck", "Unplanned\nMover", "Planned\n& Moved"))
-
-theme_paper_d <- theme_minimal(base_family = "Times New Roman", base_size = 11) +
-  theme(legend.position = "none", panel.grid.minor = element_blank())
-
-ggplot(distress_plot, aes(x = Category, y = Mean, fill = Category)) +
-  geom_col(width = 0.7) +
-  geom_errorbar(aes(ymin = Mean - 1.96 * SE, ymax = Mean + 1.96 * SE), width = 0.2) +
-  geom_text(aes(label = paste0("n=", N)), y = 0.1, size = 3,
-            family = "Times New Roman", color = "white") +
-  scale_fill_manual(values = c("Stable" = "#1B7837", "Planned\nbut Stuck" = "#D73027",
-                                "Unplanned\nMover" = "#F4A582", "Planned\n& Moved" = "#4575B4")) +
-  scale_y_continuous(limits = c(0, 2.5), expand = expansion(mult = c(0, 0.05))) +
-  labs(x = NULL, y = "Mean Distress Index (1-5)") +
-  theme_paper_d
-```
-
-```{r tbl-distress-by-age-app}
-distress_age <- data.frame(
-  Category = c("Planned & Moved", "Planned but Stuck",
-               "Stable (No Plan, No Move)", "Unplanned Mover"),
-  Young_N = c(139, 176, 426, 319),
-  Young_Mean = c("2.31", "2.25", "2.22", "2.30"),
-  Young_SD   = c("0.655", "0.649", "0.660", "0.638"),
-  Old_N   = c(30, 103, 1588, 90),
-  Old_Mean = c("2.12", "1.93", "1.82", "1.98"),
-  Old_SD   = c("0.575", "0.657", "0.560", "0.643"),
-  stringsAsFactors = FALSE, check.names = FALSE
-)
-
-make_simple_table(
-  distress_age,
-  caption = "Table S19. Psychological Distress by Plan-Action Category and Age Group",
-  note = paste(
-    "Distress index: 10-item h16 scale, range 1-5 (higher = more distress).",
-    "Observation-level. Young adults consistently show higher distress across all categories."
-  ),
-  col_labels = list(
-    Category = "", Young_N = "N", Young_Mean = "Mean", Young_SD = "SD",
-    Old_N = "N", Old_Mean = "Mean", Old_SD = "SD"
-  ),
-  span_header = list(
-    values = c("", "Young Adults", "Older Adults"),
-    widths = c(1, 3, 3)
-  )
-)
-```
-
-## Section 8: Friendship-Making Strategies
-
-Tables S20-S21 show how respondents make new friends. Young adults rely on the workplace (33%) and activities (32%); older adults rarely use the workplace (4%) and instead favor local places (25%) and community groups (17%). About one in five respondents in both groups prefer not to actively seek new friendships. Table S21 shows that community organization users have 8.3 non-kin ties vs. 7.1 for non-users (p < 0.01), and those who make friends through existing connections have 8.1 vs. 7.1 (p < 0.05). Non-engagers have fewer non-kin (6.7 vs. 7.4), though the difference is not significant.
-
-```{r tbl-friendship-strategies-app}
-strategies <- data.frame(
-  Strategy = c("Workplace", "Activities/Hobbies", "Through Existing Connections",
-               "Local Places/Neighborhood", "Community Organizations",
-               "Online", "Non-Engagement (prefers not to)", "Other/Unclear",
-               "N (respondents)"),
-  Young = c("33.3%", "32.1%", "18.6%", "15.5%", "13.7%",
-            "14.3%", "20.7%", "12.5%", "489"),
-  Old   = c("4.0%", "31.0%", "17.0%", "25.0%", "17.0%",
-            "7.0%", "24.0%", "18.0%", "100"),
-  stringsAsFactors = FALSE, check.names = FALSE
-)
-
-make_simple_table(
-  strategies,
-  caption = "Table S20. Friendship-Making Strategies by Age Group",
-  note = paste(
-    "Coded from open-ended responses (a19f: 'steps taken to meet new people').",
-    "Categories are not mutually exclusive.",
-    "Young adults: ages 21-30; Older adults: ages 50-70."
-  ),
-  bold_last = TRUE,
-  col_labels = list(Strategy = "", Young = "Young Adults", Old = "Older Adults")
-)
-```
-
-```{r tbl-strategy-network-app}
-strat_net <- data.frame(
-  Strategy = c("Community Orgs", "Through Connections", "Local Places",
-               "Workplace", "Activities", "Other/Unclear",
-               "Online", "Non-Engagement"),
-  Users    = c("8.27", "8.11", "8.06", "7.84", "7.71", "7.33", "6.65", "6.73"),
-  NonUsers = c("7.07", "7.05", "7.07", "7.00", "7.02", "7.23", "7.33", "7.38"),
-  Sig      = c("**", "*", "*", "*", "", "", "", ""),
-  stringsAsFactors = FALSE, check.names = FALSE
-)
-
-make_simple_table(
-  strat_net,
-  caption = "Table S21. Mean Non-Kin Network Size by Friendship Strategy Use",
-  note = paste(
-    "Mean concurrent (same-wave) non-kin ties for respondents using each strategy vs. not.",
-    "* p < 0.05, ** p < 0.01 (two-sample t-test).",
-    "Strategies associated with larger networks may facilitate post-move rebuilding."
-  ),
-  col_labels = list(Strategy = "", Users = "Users", NonUsers = "Non-Users",
-                    Sig = "")
-)
-```
-
-## Section 9: Do Network Consequences Differ by Move Reason?
-
-Table S22 tests whether network consequences differ by move reason, using interactions in the FE models. Each reason (career, partner, financial, housing) is tested separately. None of the 16 interaction coefficients (4 reasons x 4 network DVs) are significant (all p > 0.15). For example, career movers who left the Bay show no different change in local non-kin (0.285, p = 0.68) than non-career movers. Network changes after a move look similar regardless of why the person moved.
+Table S18 tests whether network consequences differ by move reason using interaction terms in the FE models. Each reason (career, partner, financial, housing) is tested separately. None of the 16 interaction coefficients (4 reasons x 4 network outcomes) are significant (all p > 0.15). For example, career movers who left the Bay show no different change in local non-kin (0.285, p = 0.68) compared to non-career movers. Network changes after a move are similar regardless of why the person moved.
 
 ```{r tbl-network-interactions-app, eval=data_available}
 library(plm)
@@ -1323,7 +1184,7 @@ ft_int <- align(ft_int, j = 1, align = "left", part = "body")
 ft_int <- align(ft_int, j = -1, align = "center", part = "body")
 ft_int <- align(ft_int, align = "center", part = "header")
 ft_int <- bold(ft_int, part = "header")
-ft_int <- set_caption(ft_int, caption = "Table S22. Do Network Consequences Differ by Move Reason? (FE Interactions, Young Adults)")
+ft_int <- set_caption(ft_int, caption = "Table S18. Do Network Consequences Differ by Move Reason? (FE Interactions, Young Adults)")
 ft_int <- add_footer_lines(ft_int, values = paste(
   "Each section shows interaction coefficients from a separate FE model:",
   "Network DV ~ Moved_out + Moved_in + Moved_out\u00D7Reason + Moved_in\u00D7Reason + controls.",
@@ -1340,14 +1201,14 @@ ft_int <- autofit(ft_int)
 ft_int
 ```
 
-## Section 10: Descriptive Network Trajectories for Wave-2 Movers
+### C.2 Descriptive Network Trajectories for Wave-2 Movers
 
-Figure S2 tracks mean network ties across all three waves for wave-2 movers vs. never-movers. Distant ties spike at the move then decline; local ties stay stable. This confirms the main-text model findings.
+Figure S1 shows mean network ties across all three waves for wave-2 movers compared to never-movers. Distant ties increase at the move wave and then decline; local ties remain stable. These patterns are consistent with the main-text model results.
 
 ```{r fig-trajectories-w2-movers, eval=data_available}
 #| fig-width: 9
 #| fig-height: 7
-#| fig-cap: "Figure S2. Mean Network Trajectories Across Waves: Wave-2 Movers vs. Never-Movers (Young Adults)"
+#| fig-cap: "Figure S1. Mean Network Trajectories Across Waves: Wave-2 Movers vs. Never-Movers (Young Adults)"
 
 library(cowplot)
 
@@ -1433,9 +1294,9 @@ note_traj <- ggdraw() +
 plot_grid(p_traj, note_traj, ncol = 1, rel_heights = c(1, 0.07))
 ```
 
-## Section 11: Network Consequences — Event-Study Plots (Young Adults)
+### C.3 Network Consequences: Event-Study Plots (Young Adults)
 
-Figure S3 shows network trajectories centered on the move wave for young movers, with 95% confidence bands.
+Figure S2 shows network trajectories centered on the move wave for young movers, with 95% confidence bands.
 
 ```{r load-plot-data-sec8, eval=data_available}
 # Ensure df_plot exists for sections 8-9
@@ -1466,7 +1327,7 @@ if (!exists("df_plot")) {
 ```{r fig-event-study-young-app, eval=data_available}
 #| fig-width: 9
 #| fig-height: 8
-#| fig-cap: "Figure S3. Network Changes Around Residential Moves, Young Adults (Event-Study)"
+#| fig-cap: "Figure S2. Network Changes Around Residential Moves, Young Adults (Event-Study)"
 
 library(cowplot)
 
@@ -1526,9 +1387,9 @@ note_app <- ggdraw() + draw_label(
 plot_grid(p_app, note_app, ncol = 1, rel_heights = c(1, 0.07))
 ```
 
-## Section 12: Network Consequences of Moving (Older Adults)
+### C.4 Network Consequences of Moving (Older Adults)
 
-Figures S4-S6 show the same network consequence analyses for older adults (ages 50-70). Fewer older adults move, and network effects are smaller.
+Figures S4-S6 show the same network consequence analyses for older adults (ages 50-70). Fewer older adults move, and the estimated network effects are smaller.
 
 ```{r load-plot-data-appendix, eval=data_available}
 library(ggplot2)
@@ -1588,7 +1449,7 @@ make_panel_app <- function(data, var, color, title, ylab = "Mean Ties", show_x =
 ```{r fig-network-old, eval=data_available}
 #| fig-width: 9
 #| fig-height: 8
-#| fig-cap: "Figure S4. Network Tie Changes Around Residential Moves, Older Adults"
+#| fig-cap: "Figure S3. Network Tie Changes Around Residential Moves, Older Adults"
 
 old_movers <- df_plot %>%
   filter(agegroup == 1, ever_moved == 1, !is.na(wave_rel_move),
@@ -1618,7 +1479,7 @@ plot_grid(grid1, note1, ncol = 1, rel_heights = c(1, 0.08))
 ```{r fig-outcomes-young-appendix, eval=data_available}
 #| fig-width: 9
 #| fig-height: 4.5
-#| fig-cap: "Figure S5. Network Evaluation and Well-Being Around Residential Moves, Young Adults"
+#| fig-cap: "Figure S4. Network Evaluation and Well-Being Around Residential Moves, Young Adults"
 
 young_movers_app <- df_plot %>%
   filter(agegroup == 0, ever_moved == 1, !is.na(wave_rel_move),
@@ -1655,7 +1516,7 @@ plot_grid(grid_y, note_y, ncol = 1, rel_heights = c(1, 0.1))
 ```{r fig-outcomes-old, eval=data_available}
 #| fig-width: 9
 #| fig-height: 4.5
-#| fig-cap: "Figure S6. Network Evaluation and Well-Being Around Residential Moves, Older Adults"
+#| fig-cap: "Figure S5. Network Evaluation and Well-Being Around Residential Moves, Older Adults"
 
 old_movers_out <- old_movers %>%
   mutate(
@@ -1689,50 +1550,161 @@ plot_grid(grid2, note2, ncol = 1, rel_heights = c(1, 0.1))
 
 {{< pagebreak >}}
 
-## Appendix A: Variable Definitions
+## Appendix D: Other Outcomes
 
-### A.1 Moving Variables
+### D.1 Psychological Distress
 
-**Moved_out_of_Bay_w23**
+Tables S19-S20 and Figure S6 show psychological distress by plan-action category. Stable non-movers report the lowest distress (1.90). Planned movers report the highest (2.28), followed by unplanned movers (2.23) and stuck planners (2.13). Among young adults (Table S20), differences are smaller. The gap between movers and non-movers is wider for older adults, where stable non-movers average 1.82.
 
-**Definition:** Binary indicator (0/1) for whether the respondent moved out of the Bay Area between survey waves.
+```{r tbl-distress-app}
+distress <- data.frame(
+  Category = c("Stable (No Plan, No Move)", "Planned but Stuck",
+               "Unplanned Mover", "Planned & Moved"),
+  N    = c(2014, 279, 409, 169),
+  Mean = c("1.90", "2.13", "2.23", "2.28"),
+  SD   = c("0.605", "0.669", "0.652", "0.644"),
+  Suicide = c("4.3%", "7.5%", "9.0%", "10.7%"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
 
-**Source:** Derived from survey question `a19j` (waves 2-3 only):
+make_simple_table(
+  distress,
+  caption = "Table S19. Psychological Distress by Plan-Action Category (Observation-Level)",
+  note = paste(
+    "Distress index: 10-item h16 scale, range 1-5 (higher = more distress).",
+    "Suicide ideation: h17, thought about taking own life in past 30 days.",
+    "Observation-level: each person-wave is one observation."
+  ),
+  col_labels = list(Category = "", N = "N", Mean = "Mean Distress",
+                    SD = "SD", Suicide = "% Suicide Ideation")
+)
+```
 
-> "How far is where you live now from where you lived at the time of the previous interview? Is it..."
->
-> 1. In the same neighborhood
-> 2. In a different neighborhood but in the same town
-> 3. In a different town but still in the Bay Area
-> 4. Out of the Bay Area, but still in California
-> 5. Out of California
-> 6. Other (recoded into categories 1-5)
+```{r fig-distress-app}
+#| fig-width: 7
+#| fig-height: 4.5
+#| fig-cap: "Figure S6. Psychological Distress by Plan-Action Category"
 
-**Coding:** `Moved_out_of_Bay_w23 = 1` if response is 4 (Out of Bay, in California) or 5 (Out of California). Otherwise 0.
+library(ggplot2)
 
-**Wave 1 handling:** Wave 1 does not have question a19j. Instead, `a19c_onlyw1` (time at current residence) is used: respondents at residence ≤2 years are coded as moved (1), those ≥3 years as not moved (0).
+distress_plot <- data.frame(
+  Category = c("Stable", "Planned\nbut Stuck", "Unplanned\nMover", "Planned\n& Moved"),
+  Mean = c(1.90, 2.134, 2.226, 2.277),
+  SE   = c(0.605 / sqrt(2014), 0.669 / sqrt(279),
+           0.652 / sqrt(409),  0.644 / sqrt(169)),
+  N    = c(2014, 279, 409, 169),
+  stringsAsFactors = FALSE
+)
+distress_plot$Category <- factor(distress_plot$Category,
+  levels = c("Stable", "Planned\nbut Stuck", "Unplanned\nMover", "Planned\n& Moved"))
 
-**Corrections:** Five cases were recoded from 1 to 0 at Wave 3 based on qualitative review of open-ended responses indicating local moves rather than out-of-Bay moves.
+theme_paper_d <- theme_minimal(base_family = "Times New Roman", base_size = 11) +
+  theme(legend.position = "none", panel.grid.minor = element_blank())
 
-**Moved_in_Bay_w23**
+ggplot(distress_plot, aes(x = Category, y = Mean, fill = Category)) +
+  geom_col(width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - 1.96 * SE, ymax = Mean + 1.96 * SE), width = 0.2) +
+  geom_text(aes(label = paste0("n=", N)), y = 0.1, size = 3,
+            family = "Times New Roman", color = "white") +
+  scale_fill_manual(values = c("Stable" = "#1B7837", "Planned\nbut Stuck" = "#D73027",
+                                "Unplanned\nMover" = "#F4A582", "Planned\n& Moved" = "#4575B4")) +
+  scale_y_continuous(limits = c(0, 2.5), expand = expansion(mult = c(0, 0.05))) +
+  labs(x = NULL, y = "Mean Distress Index (1-5)") +
+  theme_paper_d
+```
 
-**Definition:** Binary indicator (0/1) for whether the respondent moved within the Bay Area between survey waves.
+```{r tbl-distress-by-age-app}
+distress_age <- data.frame(
+  Category = c("Planned & Moved", "Planned but Stuck",
+               "Stable (No Plan, No Move)", "Unplanned Mover"),
+  Young_N = c(139, 176, 426, 319),
+  Young_Mean = c("2.31", "2.25", "2.22", "2.30"),
+  Young_SD   = c("0.655", "0.649", "0.660", "0.638"),
+  Old_N   = c(30, 103, 1588, 90),
+  Old_Mean = c("2.12", "1.93", "1.82", "1.98"),
+  Old_SD   = c("0.575", "0.657", "0.560", "0.643"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
 
-**Source:** Derived from `a19j` responses 2 (different neighborhood, same town) or 3 (different town, still in Bay Area).
+make_simple_table(
+  distress_age,
+  caption = "Table S20. Psychological Distress by Plan-Action Category and Age Group",
+  note = paste(
+    "Distress index: 10-item h16 scale, range 1-5 (higher = more distress).",
+    "Observation-level. Young adults consistently show higher distress across all categories."
+  ),
+  col_labels = list(
+    Category = "", Young_N = "N", Young_Mean = "Mean", Young_SD = "SD",
+    Old_N = "N", Old_Mean = "Mean", Old_SD = "SD"
+  ),
+  span_header = list(
+    values = c("", "Young Adults", "Older Adults"),
+    widths = c(1, 3, 3)
+  )
+)
+```
 
-**Moved_w23**
+### D.2 Friendship-Making Strategies
 
-**Definition:** Binary indicator (0/1) for any move between survey waves, regardless of distance.
+Tables S21-S22 show how respondents make new friends. Young adults rely on the workplace (33%) and activities (32%). Older adults rarely use the workplace (4%) and instead favor local places (25%) and community groups (17%). About one in five respondents in both groups prefer not to actively seek new friendships. Table S22 shows that community organization users have 8.3 non-kin ties vs. 7.1 for non-users (p < 0.01), and those who make friends through existing connections have 8.1 vs. 7.1 (p < 0.05). Non-engagers have fewer non-kin (6.7 vs. 7.4), though the difference is not significant.
 
-**Source:** Derived from `a19j` responses 1-5 (any move reported).
+```{r tbl-friendship-strategies-app}
+strategies <- data.frame(
+  Strategy = c("Workplace", "Activities/Hobbies", "Through Existing Connections",
+               "Local Places/Neighborhood", "Community Organizations",
+               "Online", "Non-Engagement (prefers not to)", "Other/Unclear",
+               "N (respondents)"),
+  Young = c("33.3%", "32.1%", "18.6%", "15.5%", "13.7%",
+            "14.3%", "20.7%", "12.5%", "489"),
+  Old   = c("4.0%", "31.0%", "17.0%", "25.0%", "17.0%",
+            "7.0%", "24.0%", "18.0%", "100"),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
 
-## Section 13: Weighted Robustness — Main Results Tables
+make_simple_table(
+  strategies,
+  caption = "Table S21. Friendship-Making Strategies by Age Group",
+  note = paste(
+    "Coded from open-ended responses (a19f: 'steps taken to meet new people').",
+    "Categories are not mutually exclusive.",
+    "Young adults: ages 21-30; Older adults: ages 50-70."
+  ),
+  bold_last = TRUE,
+  col_labels = list(Strategy = "", Young = "Young Adults", Old = "Older Adults")
+)
+```
 
-Tables S23–S26 replicate the four main-text tables using UCNets demographic survey weights (`wt_dem_95_inf` for cross-sectional models; `wt_dem_95_inf_w3`, the person-level wave-3 weight, for fixed effects and first-difference models). The purpose is to verify that results are not driven by differential nonresponse or sampling.
+```{r tbl-strategy-network-app}
+strat_net <- data.frame(
+  Strategy = c("Community Orgs", "Through Connections", "Local Places",
+               "Workplace", "Activities", "Other/Unclear",
+               "Online", "Non-Engagement"),
+  Users    = c("8.27", "8.11", "8.06", "7.84", "7.71", "7.33", "6.65", "6.73"),
+  NonUsers = c("7.07", "7.05", "7.07", "7.00", "7.02", "7.23", "7.33", "7.38"),
+  Sig      = c("**", "*", "*", "*", "", "", "", ""),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
 
-The core findings on network predictors of planning and mobility are robust to weighting. In the planning models (Table S23), distant non-kin remains a significant positive predictor for the whole sample and young adults, though it loses significance among older adults (where power is limited). Local kin retains its negative direction across specifications, remaining significant for young adults. In the mobility models (Table S24), kin in household, distant kin, and distant non-kin all retain their significance and direction for out-of-Bay moves among young adults. Some control variables — notably homeownership and marriage/cohabitation — lose significance with weighting, likely because the demographic reweighting adjusts the sample composition that correlates with these variables. These are controls rather than focal predictors, so this does not threaten the substantive conclusions.
+make_simple_table(
+  strat_net,
+  caption = "Table S22. Mean Non-Kin Network Size by Friendship Strategy Use",
+  note = paste(
+    "Mean concurrent (same-wave) non-kin ties for respondents using each strategy vs. not.",
+    "* p < 0.05, ** p < 0.01 (two-sample t-test).",
+    "Strategies associated with larger networks may facilitate post-move rebuilding."
+  ),
+  col_labels = list(Strategy = "", Users = "Users", NonUsers = "Non-Users",
+                    Sig = "")
+)
+```
 
-The network consequence models (Tables S25–S26) are more sensitive to weighting, as expected given the limited within-person variation available with only three waves. In the fixed effects models (Table S25), the within-Bay association with local non-kin gains and the out-of-Bay association with distant non-kin gains both lose significance, though the out-of-Bay association with distant kin remains significant. The first-difference models (Table S26) are more stable: the key finding that out-of-Bay movers show declining distant ties one wave later holds with weighting (distant non-kin: -0.676**, distant kin: -0.555*). Overall, the trajectory of network adjustment after moving is consistent across specifications, while the point estimates of immediate network change are less precisely estimated with weights.
+## Appendix E: Robustness — Weighted Models
+
+Tables S23-S26 replicate the four main-text tables using UCNets demographic survey weights (`wt_dem_95_inf` for cross-sectional models; `wt_dem_95_inf_w3`, the person-level wave-3 weight, for fixed effects and first-difference models). The purpose is to verify that results are not driven by differential nonresponse or sampling.
+
+The main findings on network predictors of planning and mobility are robust to weighting. In the planning models (Table S23), distant non-kin remains a significant positive predictor for the whole sample and young adults, though it loses significance among older adults where power is limited. Local kin retains its negative direction across specifications, remaining significant for young adults. In the mobility models (Table S24), kin in household, distant kin, and distant non-kin all retain their significance and direction for out-of-Bay moves among young adults. Some control variables, notably homeownership and marriage/cohabitation, lose significance with weighting, likely because demographic reweighting adjusts the sample composition. These are controls rather than focal predictors, so this does not affect the substantive conclusions.
+
+The network consequence models (Tables S25-S26) are more sensitive to weighting, as expected given limited within-person variation with only three waves. In the fixed effects models (Table S25), the within-Bay association with local non-kin gains and the out-of-Bay association with distant non-kin gains both lose significance, though the out-of-Bay association with distant kin remains significant. The first-difference models (Table S26) are more stable: the finding that out-of-Bay movers show declining distant ties one wave later holds with weighting (distant non-kin: -0.676**, distant kin: -0.555*). Overall, the pattern of network adjustment after moving is consistent across specifications, while the point estimates of immediate network change are less precisely estimated with weights.
 
 ```{r wtd-setup}
 library(sandwich)
@@ -2224,3 +2196,171 @@ ft_fd_w <- style_footer(ft_fd_w, paste(
 ft_fd_w <- autofit(ft_fd_w)
 ft_fd_w
 ```
+
+## Appendix F: Reference
+
+### F.1 Respondent-Level Descriptive Table
+
+Table S27 presents the same descriptive comparison as Table 1, but at the respondent level (one row per person). Characteristics are measured at wave 1 (baseline) and move status is classified by whether the respondent ever moved out of the Bay Area, ever moved locally, or never moved during the study.
+
+```{r tbl-s27-respondent-desc, eval=TRUE}
+# ---------------------------------------------------------------------------
+# Table S27: Respondent-level baseline characteristics by subsequent move status
+# ---------------------------------------------------------------------------
+data_path <- here("data", "out", "R_DF.rds")
+if (!file.exists(data_path)) data_path <- here("data", "R_DF.rds")
+
+if (file.exists(data_path)) {
+  df_s27 <- readRDS(data_path)
+
+  # Build respondent-level dataset
+  person_s27 <- df_s27 %>%
+    group_by(prim_key) %>%
+    summarise(
+      agegroup = first(agegroup),
+      ever_moved_out = max(Moved_out_of_Bay_w23, na.rm = TRUE),
+      ever_moved_in  = max(Moved_in_Bay_w23, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      ever_moved_out = ifelse(is.infinite(ever_moved_out), 0, ever_moved_out),
+      ever_moved_in  = ifelse(is.infinite(ever_moved_in), 0, ever_moved_in),
+      move_status = case_when(
+        ever_moved_out == 1 ~ "Out of Bay",
+        ever_moved_in == 1  ~ "Within Bay",
+        TRUE                ~ "Non-Mover"
+      )
+    )
+
+  # Merge wave-1 baseline characteristics
+  w1_s27 <- df_s27 %>% filter(WAVE == 1) %>%
+    select(prim_key, female, age, black_race, asian_race, latino_eth,
+           BA_or_greater, Owns_home, Full_Time, Marr_Cohab,
+           Kin_in_HH_N, Kin_within_60_N, Kin_GT_Hour_N,
+           Nonkin_in_HH_N, Nonkin_within_60_N, Nonkin_GT_Hour_N)
+
+  person_s27 <- person_s27 %>% inner_join(w1_s27, by = "prim_key")
+
+  fmt_pct_s <- function(x) sprintf("%.1f%%", 100 * mean(x, na.rm = TRUE))
+  fmt_ms_s  <- function(x) sprintf("%.1f (%.1f)", mean(x, na.rm = TRUE), sd(x, na.rm = TRUE))
+
+  build_col_s <- function(data) {
+    n <- nrow(data)
+    c(
+      fmt_pct_s(data$female), fmt_ms_s(data$age),
+      fmt_pct_s(data$black_race), fmt_pct_s(data$asian_race), fmt_pct_s(data$latino_eth),
+      fmt_pct_s(data$BA_or_greater), fmt_pct_s(data$Owns_home),
+      fmt_pct_s(data$Full_Time), fmt_pct_s(data$Marr_Cohab),
+      fmt_ms_s(data$Kin_in_HH_N), fmt_ms_s(data$Kin_within_60_N),
+      fmt_ms_s(data$Kin_GT_Hour_N), fmt_ms_s(data$Nonkin_in_HH_N),
+      fmt_ms_s(data$Nonkin_within_60_N), fmt_ms_s(data$Nonkin_GT_Hour_N),
+      as.character(n)
+    )
+  }
+
+  var_names_s <- c(
+    "Female (%)", "Age (mean, SD)",
+    "Black (%)", "Asian (%)", "Latino/a (%)",
+    "BA or Higher (%)", "Homeowner (%)",
+    "Full-Time Employed (%)", "Married/Cohabiting (%)",
+    "Kin in Household", "Kin within 60 min",
+    "Kin >60 min", "Non-kin in Household",
+    "Non-kin within 60 min", "Non-kin >60 min",
+    "N (respondents)"
+  )
+
+  sec_labels_s <- c("Demographics", "Socioeconomic Status (Baseline)",
+                     "Network Variables at Baseline (mean, SD)")
+
+  yn <- build_col_s(person_s27 %>% filter(agegroup == 0, move_status == "Non-Mover"))
+  yl <- build_col_s(person_s27 %>% filter(agegroup == 0, move_status == "Within Bay"))
+  yd <- build_col_s(person_s27 %>% filter(agegroup == 0, move_status == "Out of Bay"))
+  on <- build_col_s(person_s27 %>% filter(agegroup == 1, move_status == "Non-Mover"))
+  ol <- build_col_s(person_s27 %>% filter(agegroup == 1, move_status == "Within Bay"))
+  od <- build_col_s(person_s27 %>% filter(agegroup == 1, move_status == "Out of Bay"))
+
+  rows_s <- list()
+  for (i in seq_along(var_names_s)) {
+    if (i == 1)  rows_s[[length(rows_s) + 1]] <- c(sec_labels_s[1], rep("", 6))
+    if (i == 6)  rows_s[[length(rows_s) + 1]] <- c(sec_labels_s[2], rep("", 6))
+    if (i == 10) rows_s[[length(rows_s) + 1]] <- c(sec_labels_s[3], rep("", 6))
+    rows_s[[length(rows_s) + 1]] <- c(
+      paste0("  ", var_names_s[i]), yn[i], yl[i], yd[i], on[i], ol[i], od[i]
+    )
+  }
+
+  tbl_s <- as.data.frame(do.call(rbind, rows_s), stringsAsFactors = FALSE)
+  names(tbl_s) <- c("Variable", "YN", "YL", "YD", "ON", "OL", "OD")
+
+  sec_s <- which(tbl_s$Variable %in% sec_labels_s)
+  n_s <- which(grepl("N \\(resp", tbl_s$Variable))
+
+  ft_s <- flextable(tbl_s)
+  ft_s <- set_header_labels(ft_s, Variable = "",
+    YN = "Non-Mover", YL = "Local", YD = "Distant",
+    ON = "Non-Mover", OL = "Local", OD = "Distant")
+  ft_s <- add_header_row(ft_s,
+    values = c("", "Young Adults (21-30)", "Older Adults (50-70)"),
+    colwidths = c(1, 3, 3), top = TRUE)
+  ft_s <- theme_booktabs(ft_s)
+  ft_s <- bold(ft_s, i = sec_s, j = 1, part = "body")
+  if (length(n_s) > 0) {
+    ft_s <- hline(ft_s, i = n_s - 1, part = "body", border = fp_border(width = 0.5))
+  }
+  ft_s <- fontsize(ft_s, size = 9, part = "all")
+  ft_s <- font(ft_s, fontname = "Times New Roman", part = "all")
+  ft_s <- align(ft_s, j = 1, align = "left", part = "body")
+  ft_s <- align(ft_s, j = -1, align = "center", part = "body")
+  ft_s <- align(ft_s, align = "center", part = "header")
+  ft_s <- bold(ft_s, part = "header")
+  ft_s <- set_caption(ft_s, caption = "Table S27. Baseline (Wave 1) Characteristics by Subsequent Mobility Status and Age Group (Respondent-Level)")
+  ft_s <- add_footer_lines(ft_s, values = paste(
+    "Respondent-level: one row per person. Move status based on whether the respondent",
+    "ever moved out of the Bay Area, ever moved locally, or never moved during the study.",
+    "All characteristics measured at wave 1 (baseline).",
+    "Percentages for binary variables; mean (SD) for continuous variables."
+  ))
+  ft_s <- fontsize(ft_s, size = 9, part = "footer")
+  ft_s <- font(ft_s, fontname = "Times New Roman", part = "footer")
+  ft_s <- italic(ft_s, part = "footer")
+  ft_s <- autofit(ft_s)
+  ft_s
+}
+```
+### F.2 Variable Definitions
+
+#### Moving Variables
+
+**Moved_out_of_Bay_w23**
+
+**Definition:** Binary indicator (0/1) for whether the respondent moved out of the Bay Area between survey waves.
+
+**Source:** Derived from survey question `a19j` (waves 2-3 only):
+
+> "How far is where you live now from where you lived at the time of the previous interview? Is it..."
+>
+> 1. In the same neighborhood
+> 2. In a different neighborhood but in the same town
+> 3. In a different town but still in the Bay Area
+> 4. Out of the Bay Area, but still in California
+> 5. Out of California
+> 6. Other (recoded into categories 1-5)
+
+**Coding:** `Moved_out_of_Bay_w23 = 1` if response is 4 (Out of Bay, in California) or 5 (Out of California). Otherwise 0.
+
+**Wave 1 handling:** Wave 1 does not have question a19j. Instead, `a19c_onlyw1` (time at current residence) is used: respondents at residence ≤2 years are coded as moved (1), those ≥3 years as not moved (0).
+
+**Corrections:** Five cases were recoded from 1 to 0 at Wave 3 based on qualitative review of open-ended responses indicating local moves rather than out-of-Bay moves.
+
+**Moved_in_Bay_w23**
+
+**Definition:** Binary indicator (0/1) for whether the respondent moved within the Bay Area between survey waves.
+
+**Source:** Derived from `a19j` responses 2 (different neighborhood, same town) or 3 (different town, still in Bay Area).
+
+**Moved_w23**
+
+**Definition:** Binary indicator (0/1) for any move between survey waves, regardless of distance.
+
+**Source:** Derived from `a19j` responses 1-5 (any move reported).
+
